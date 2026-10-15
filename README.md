@@ -64,6 +64,7 @@ This package fixes that end-to-end:
 | Huawei MateBook MCLG-XX / M1010            | `GXFP5130:00` | `GF_GCC_EC_20055` | ✅ Verified (community report) |
 | Huawei MateBook D (MDG-XX / M1010)         | `GXFP5130:00` | `GF_GCC_EC_20055` | ✅ Verified (community report) |
 | Huawei MateBook 14 2022 (KLVF-XX / M1010)  | `GXFP5130:00` | `GF_GCC_EC_20040` | ⚠️ Partial (community report) — see note below |
+| Huawei MateBook X Pro 2020 (MACHC-WAX9), BIOS 1.26 | `GXFP51B7:00` | `GF_9ELIBE_EC_19024` | 🧪 Experimental — needs manual setup, see [docs/gxfp51b7.md](docs/gxfp51b7.md) |
 | Other MateBook models with`GXFP5130:00`  | `GXFP5130:00` | unknown             | ❓ Untested — please report |
 
 On the MateBook 14 2022 (FW `GF_GCC_EC_20040`), one reporter found verify to be

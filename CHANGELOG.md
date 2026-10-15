@@ -5,6 +5,10 @@ Source: https://github.com/Metrohan/gxfp5130-linux/releases
 
 ## Unreleased
 
+- Experimental GXFP51B7 (ChicagoHS) support for the MateBook X Pro 2020 (MACHC-WAX9, BIOS 1.26): kernel transport, 48-byte TLS PSK, image decoder, finger detection, libfprint driver `gxfp51b7`. Manual setup only, see `docs/gxfp51b7.md` (#16, @rumours86).
+- SIGFM: optional ridge-overlap matcher, enabled per driver through `ridge_threshold` (off by default; used by `gxfp51b7`).
+- Kernel: remove the debugfs directory when probe fails.
+- Kernel: `GXFP5130` now depends on `ACPI_EC` (`ec_read`/`ec_write` are only built with it).
 - README: Omarchy troubleshooting note (`omarchy-setup-security-fingerprint` detects USB readers only), reported by @choirib in #15.
 - README: troubleshooting rows now include the literal error strings `No devices available` and `SSL - Verification of the message MAC failed`.
 - Issue templates: warning not to paste key material; optional `doctor.sh` output and firmware fields.
