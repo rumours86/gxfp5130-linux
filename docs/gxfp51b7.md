@@ -95,6 +95,13 @@ per command, 15 s TLS, 5 s per image. Nothing is retried blindly.
 
 The config write is volatile; nothing is flashed.
 
+The background needs a bare sensor. If MANUAL reports a touch (a finger
+put down before the prompt, or a touch to wake the lock screen), the open
+polls it every 100 ms for up to 4 s and, once the finger is lifted, waits
+until the mask has stayed clear for 0.5 s: frames taken right after the
+lift had noise99 20..64 instead of 11..12. Before, the open failed at once
+with `-EBUSY` ("Device or resource busy" from fprintd).
+
 **TLS**: the sensor is the client. TLS 1.2, `TLS_PSK_WITH_AES_128_CBC_SHA256`
 (`0x00ae`), identity `Client_identity`, 48-byte PSK. Mbed TLS must allow PSKs
 of 48 bytes (`MBEDTLS_PSK_MAX_LEN`): true for a default 3.6 build, false for
