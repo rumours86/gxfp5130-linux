@@ -197,9 +197,9 @@ def main():
     out = os.path.join(a.outdir, "gxfp51b7-dmar.cpio")
     with open(out, "wb") as f:
         f.write(cpio)
-    oem = new[10:16].decode(errors="replace"), new[16:24].decode(errors="replace")
+    oem = [new[lo:hi].decode(errors="replace").rstrip("\0 ") for lo, hi in ((10, 16), (16, 24))]
     print("DMAR %s %s rev %d -> %d, RMRR %02x:%02x.%x 0x%x..0x%x%s"
-          % (oem[0], oem[1].rstrip(), rev, rev + 1, bus, dev, fn, start, last,
+          % (oem[0], oem[1], rev, rev + 1, bus, dev, fn, start, last,
              "" if res else " (firmware memory map not readable, not checked)"))
     print(aml)
     print(out)
