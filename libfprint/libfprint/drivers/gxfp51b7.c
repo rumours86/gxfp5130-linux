@@ -458,6 +458,11 @@ fpi_device_gxfp51b7_class_init (FpiDeviceGxfp51b7Class *klass)
   dev_class->id_table = id_table;
   dev_class->scan_type = FP_SCAN_TYPE_PRESS;
   dev_class->nr_enroll_stages = GXFP51B7_ENROLL_STAGES;
+  /* Waiting for a finger is the sensor's own low-power finger detection;
+   * frames are taken only on a touch. Like goodixmoc, no duty-cycle model:
+   * the default one disabled the sensor for minutes after a 3-minute wait
+   * or a long enrollment. */
+  dev_class->temp_hot_seconds = -1;
 
   img_class->img_width = 80;
   img_class->img_height = 64;
