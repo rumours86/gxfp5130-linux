@@ -271,11 +271,17 @@ fpi_print_bz3_match (FpPrint *template, FpPrint *print, gint bz3_threshold, GErr
  * fpi_print_sigfm_match:
  * @template: A #FpPrint containing one or more prints
  * @print: A newly scanned #FpPrint to test
- * @bz3_threshold: The BZ3 match threshold
+ * @bz3_threshold: The SIGFM match threshold
+ * @ridge_threshold: Ridge-overlap threshold, 0 to disable
  * @error: Return location for error
  *
  * Match the newly scanned @print (containing exactly one print) against the
  * prints contained in @template which will have been stored during enrollment.
+ *
+ * If @ridge_threshold is above 0 and the prints carry their frames, the mean
+ * ridge-overlap score of the two best enrolled frames is checked first.
+ * Requiring two frames means one chance alignment of periodic ridges is not
+ * enough. Otherwise, or if that fails, the SIGFM score decides.
  *
  * Both @template and @print need to be of type #FPI_PRINT_SIGFM for this to
  * work.
@@ -284,7 +290,8 @@ fpi_print_bz3_match (FpPrint *template, FpPrint *print, gint bz3_threshold, GErr
  */
 FpiMatchResult
 fpi_print_sigfm_match (FpPrint * template, FpPrint * print,
-                     gint bz3_threshold, GError ** error)
+                       gint bz3_threshold, gdouble ridge_threshold,
+                       GError ** error)
 {
   if (template->type != FPI_PRINT_SIGFM)
     {
@@ -295,6 +302,38 @@ fpi_print_sigfm_match (FpPrint * template, FpPrint * print,
       return FPI_MATCH_ERROR;
     }
   SigfmImgInfo * against = g_ptr_array_index (print->prints, 0);
+
+  if (ridge_threshold > 0 && sigfm_has_ridge (against) &&
+      template->prints->len > 0)
+    {
+      guint n = template->prints->len;
+      g_autofree gdouble *scores = g_new (gdouble, n);
+      gdouble first = -1, second = -1;
+
+      if (sigfm_ridge_scores ((SigfmImgInfo * const *) template->prints->pdata,
+                              n, against, scores) == 0)
+        {
+          for (guint i = 0; i < n; i++)
+            {
+              if (scores[i] > first)
+                {
+                  second = first;
+                  first = scores[i];
+                }
+              else if (scores[i] > second)
+                {
+                  second = scores[i];
+                }
+            }
+          if (n == 1)
+            second = first;
+          fp_dbg ("ridge score %.3f/%.3f (best %.3f, %u frames)",
+                  (first + second) / 2, ridge_threshold, first, n);
+          if ((first + second) / 2 >= ridge_threshold)
+            return FPI_MATCH_SUCCESS;
+        }
+    }
+
   for (int i = 0; i != template->prints->len; ++i)
     {
       SigfmImgInfo * pinfo = g_ptr_array_index (template->prints, i);

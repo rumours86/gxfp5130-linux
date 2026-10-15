@@ -46,6 +46,9 @@ struct serializer<SigfmImgInfo> : public std::true_type {
     static void serialize(const SigfmImgInfo& info, stream& out)
     {
         out << info.keypoints << info.descriptors;
+        if (!info.ridge.empty()) {
+            out << info.ridge;
+        }
     }
 };
 
@@ -55,6 +58,17 @@ struct deserializer<SigfmImgInfo> : public std::true_type {
     {
         SigfmImgInfo info;
         in >> info.keypoints >> info.descriptors;
+        // Templates written before the ridge matcher end here.
+        if (in.size() > 0) {
+            int type, rows, cols;
+            in >> type >> rows >> cols;
+            if (type != CV_8UC1 || rows <= 0 || cols <= 0 || rows > 512 ||
+                cols > 512 || in.size() != std::size_t(rows) * cols) {
+                throw std::runtime_error{"bad ridge image"};
+            }
+            info.ridge.create(rows, cols, CV_8UC1);
+            in.read(info.ridge.data, info.ridge.total());
+        }
         return info;
     }
 };
@@ -138,6 +152,138 @@ SigfmImgInfo* sigfm_extract(const SigfmPix* pix, int width, int height)
 
     auto* info = new SigfmImgInfo{pts, descs};
     return info;
+}
+
+namespace {
+// Ridge-overlap matcher for small press sensors (GXFP51B7, 80x64). SIGFM's
+// sparse keypoints tolerate only 5% length change, so two separate touches of
+// the same finger, pressed with different force, often score zero. Here the
+// high-passed ridge images are aligned with a rigid ECC instead. An affine
+// fit was tried first: it stretched and sheared other fingers' ridges onto
+// the enrolled ones (0.79 for a wrong finger against 0.69 for a true touch),
+// while true touches needed almost no stretch.
+bool ridge_prepare(const cv::Mat& raw, cv::Mat& out)
+{
+    cv::Mat blur;
+    raw.convertTo(out, CV_32F, 1. / 255);
+    cv::GaussianBlur(out, blur, cv::Size(), 3);
+    out -= blur;
+    cv::Scalar mean, sd;
+    cv::meanStdDev(out, mean, sd);
+    return sd[0] >= 1e-6;
+}
+
+bool ridge_plausible(const cv::Mat& w, cv::Size size)
+{
+    cv::Mat valid(size, CV_8U, cv::Scalar(255)), warped;
+    cv::warpAffine(valid, warped, w, size,
+                   cv::INTER_NEAREST | cv::WARP_INVERSE_MAP);
+    const double coverage =
+        double(cv::countNonZero(warped)) / double(size.area());
+    return coverage > .45;
+}
+
+double ridge_score(const cv::Mat& reference, const cv::Mat& probe)
+{
+    if (reference.size() != probe.size()) {
+        return -1;
+    }
+    cv::Mat x, y;
+    if (!ridge_prepare(reference, x) || !ridge_prepare(probe, y)) {
+        return -1;
+    }
+    // Zero rows/columns at the probe border were never observed.
+    std::vector<cv::Point> observed;
+    cv::findNonZero(probe, observed);
+    if (observed.empty()) {
+        return -1;
+    }
+    cv::Mat mask(probe.size(), CV_8U, cv::Scalar(0));
+    mask(cv::boundingRect(observed)).setTo(255);
+    cv::erode(mask, mask, cv::Mat::ones(7, 7, CV_8U));
+
+    const cv::Point2f centre(probe.cols / 2.f, probe.rows / 2.f);
+    std::vector<cv::Mat> seeds;
+    const auto shift = cv::phaseCorrelate(x, y);
+    seeds.push_back((cv::Mat_<float>(2, 3) << 1, 0, shift.x, 0, 1, shift.y));
+    for (int angle = -30; angle <= 30; angle += 10) {
+        for (int dx = -20; dx <= 20; dx += 10) {
+            for (int dy = -16; dy <= 16; dy += 8) {
+                cv::Mat w;
+                cv::getRotationMatrix2D(centre, angle, 1).convertTo(w, CV_32F);
+                w.at<float>(0, 2) += dx;
+                w.at<float>(1, 2) += dy;
+                seeds.push_back(w);
+            }
+        }
+    }
+
+    // A short ECC run ranks the seeds; only the best few are refined. On the
+    // labelled corpus this gives the same maxima as refining every seed.
+    std::vector<std::pair<double, cv::Mat>> coarse;
+    for (const auto& seed : seeds) {
+        cv::Mat w = seed.clone();
+        try {
+            const double s = cv::findTransformECC(
+                x, y, w, cv::MOTION_EUCLIDEAN,
+                cv::TermCriteria(cv::TermCriteria::COUNT | cv::TermCriteria::EPS,
+                                 6, 1e-4),
+                mask, 3);
+            coarse.emplace_back(s, w);
+        }
+        catch (const cv::Exception&) {
+        }
+    }
+    std::sort(coarse.begin(), coarse.end(),
+              [](const auto& a, const auto& b) { return a.first > b.first; });
+    if (coarse.size() > 3) {
+        coarse.resize(3);
+    }
+
+    double best = -1;
+    for (auto& [unused, w] : coarse) {
+        try {
+            const double s = cv::findTransformECC(
+                x, y, w, cv::MOTION_EUCLIDEAN,
+                cv::TermCriteria(cv::TermCriteria::COUNT | cv::TermCriteria::EPS,
+                                 80, 1e-5),
+                mask, 3);
+            if (s > best && ridge_plausible(w, probe.size())) {
+                best = s;
+            }
+        }
+        catch (const cv::Exception&) {
+        }
+    }
+    return best;
+}
+} // namespace
+
+int sigfm_has_ridge(SigfmImgInfo* info) { return !info->ridge.empty(); }
+
+void sigfm_attach_frame(SigfmImgInfo* info, const SigfmPix* pix, int width,
+                        int height)
+{
+    info->ridge.create(height, width, CV_8UC1);
+    std::memcpy(info->ridge.data, pix, std::size_t(width) * height);
+}
+
+int sigfm_ridge_scores(SigfmImgInfo* const* enrolled, int count,
+                       SigfmImgInfo* frame, double* scores)
+{
+    try {
+        cv::parallel_for_(cv::Range(0, count), [&](const cv::Range& range) {
+            for (int i = range.start; i < range.end; i++) {
+                scores[i] = enrolled[i]->ridge.empty() || frame->ridge.empty()
+                                ? -1
+                                : ridge_score(enrolled[i]->ridge, frame->ridge);
+            }
+        });
+        return 0;
+    }
+    catch (const std::exception&) {
+        return -1;
+    }
 }
 
 int sigfm_match_score(SigfmImgInfo* frame, SigfmImgInfo* enrolled)

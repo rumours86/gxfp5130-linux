@@ -18,6 +18,8 @@
  */
 
 #include "fpi-print.h"
+#include "fpi-image.h"
+#include "sigfm/sigfm.hpp"
 #define FP_COMPONENT "image_device"
 #include "fpi-log.h"
 
@@ -276,6 +278,10 @@ fpi_image_device_minutiae_detected (GObject *source_object, GAsyncResult *res, g
 
   if (!error)
     {
+      if (priv->algorithm == FPI_PRINT_SIGFM && priv->ridge_threshold > 0)
+        sigfm_attach_frame (fp_image_get_sigfm_info (image), image->data,
+                            image->width, image->height);
+
       print = fp_print_new (device);
       fpi_print_set_type (print, priv->algorithm);
       if (!fpi_print_add_from_image (print, image, &error))
@@ -330,6 +336,7 @@ fpi_image_device_minutiae_detected (GObject *source_object, GAsyncResult *res, g
                                           &error);
           else if (priv->algorithm == FPI_PRINT_SIGFM)
             result = fpi_print_sigfm_match (template, print, priv->bz3_threshold,
+                                            priv->ridge_threshold,
                                           &error);
         }
       else
@@ -359,7 +366,8 @@ fpi_image_device_minutiae_detected (GObject *source_object, GAsyncResult *res, g
                                                 priv->bz3_threshold, &error);
           else if (priv->algorithm == FPI_PRINT_SIGFM)
             match_result = fpi_print_sigfm_match (template, print,
-                                                priv->bz3_threshold, &error);
+                                                priv->bz3_threshold,
+                                                priv->ridge_threshold, &error);
 
           if (match_result == FPI_MATCH_SUCCESS)
             {

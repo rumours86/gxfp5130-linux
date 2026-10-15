@@ -158,6 +158,115 @@ TEST_SUITE("matching")
     }
 }
 
+TEST_SUITE("ridge")
+{
+    // 80x64 crops of the embedded AES3500 capture stand in for the GXFP51B7
+    // press sensor, which has the same frame size.
+    static std::vector<SigfmPix> crop(int x0, int y0, int dx = 0, int dy = 0)
+    {
+        constexpr auto w = 80;
+        constexpr auto h = 64;
+        std::vector<SigfmPix> out(w * h, 0);
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                // Pixels shifted in from outside the crop stay 0, like
+                // unobserved border columns.
+                const int sx = x - dx;
+                const int sy = y - dy;
+                if (sx < 0 || sy < 0 || sx >= w || sy >= h) {
+                    continue;
+                }
+                out[y * w + x] =
+                    embedded::capture_aes3500[(y0 + sy) * 256 + x0 + sx];
+            }
+        }
+        return out;
+    }
+
+    static double score(const std::vector<SigfmPix>& enrolled,
+                 const std::vector<SigfmPix>& probe)
+    {
+        SigfmImgInfo a{};
+        SigfmImgInfo b{};
+        sigfm_attach_frame(&a, enrolled.data(), 80, 64);
+        sigfm_attach_frame(&b, probe.data(), 80, 64);
+        SigfmImgInfo* gallery[] = {&a};
+        double result = -2;
+        REQUIRE(sigfm_ridge_scores(gallery, 1, &b, &result) == 0);
+        return result;
+    }
+
+    TEST_CASE("an identical frame aligns")
+    {
+        const auto f = crop(88, 96);
+        CHECK(score(f, f) > 0.95);
+    }
+
+    TEST_CASE("a shifted touch aligns")
+    {
+        CHECK(score(crop(88, 96), crop(88, 96, 9, -6)) > 0.8);
+    }
+
+    TEST_CASE("another part of the print stays below the 51B7 threshold")
+    {
+        // Periodic ridges still correlate: this pair scores about 0.72, and
+        // across 456 non-overlapping pairs of this image the maximum is 0.815.
+        CHECK(score(crop(88, 96), crop(20, 150)) < 0.8);
+    }
+
+    TEST_CASE("a flat frame is rejected")
+    {
+        const std::vector<SigfmPix> flat(80 * 64, 128);
+        CHECK(score(crop(88, 96), flat) == -1);
+    }
+
+    TEST_CASE("frames without a stored image score -1")
+    {
+        SigfmImgInfo a{};
+        SigfmImgInfo b{};
+        const auto f = crop(88, 96);
+        sigfm_attach_frame(&b, f.data(), 80, 64);
+        SigfmImgInfo* gallery[] = {&a};
+        double result = 0;
+        REQUIRE(sigfm_ridge_scores(gallery, 1, &b, &result) == 0);
+        CHECK(result == -1);
+    }
+
+    TEST_CASE("the frame survives serialization")
+    {
+        const auto f = crop(88, 96);
+        SigfmImgInfo* info = sigfm_extract(f.data(), 80, 64);
+        REQUIRE(info != nullptr);
+        CHECK(!sigfm_has_ridge(info));
+        int plain_len;
+        unsigned char* plain = sigfm_serialize_binary(info, &plain_len);
+
+        sigfm_attach_frame(info, f.data(), 80, 64);
+        int len;
+        unsigned char* bytes = sigfm_serialize_binary(info, &len);
+        CHECK(len == plain_len + 3 * int(sizeof(int)) + 80 * 64);
+
+        SigfmImgInfo* back = sigfm_deserialize_binary(bytes, len);
+        REQUIRE(back != nullptr);
+        CHECK(sigfm_has_ridge(back));
+        CHECK(comp_mats(info->ridge, back->ridge));
+
+        // Templates from before the ridge matcher still load.
+        SigfmImgInfo* old = sigfm_deserialize_binary(plain, plain_len);
+        REQUIRE(old != nullptr);
+        CHECK(!sigfm_has_ridge(old));
+
+        // A truncated frame is refused rather than read past the end.
+        CHECK(sigfm_deserialize_binary(bytes, len - 1) == nullptr);
+
+        sigfm_free_info(back);
+        sigfm_free_info(old);
+        sigfm_free_info(info);
+        free(bytes);
+        free(plain);
+    }
+}
+
 TEST_SUITE("binary")
 {
 

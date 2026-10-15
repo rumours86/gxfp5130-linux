@@ -194,6 +194,9 @@ fp_image_device_constructed (GObject * obj)
   priv->algorithm = FPI_PRINT_NBIS;
   if (cls->algorithm > 0)
     priv->algorithm = cls->algorithm;
+  priv->ridge_threshold = cls->ridge_threshold;
+  if (g_getenv ("FP_SIGFM_RIDGE_THRESHOLD"))
+    priv->ridge_threshold = g_ascii_strtod (g_getenv ("FP_SIGFM_RIDGE_THRESHOLD"), NULL);
 
   G_OBJECT_CLASS (fp_image_device_parent_class)->constructed (obj);
 }

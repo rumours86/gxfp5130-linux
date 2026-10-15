@@ -93,6 +93,32 @@ int sigfm_keypoints_count(SigfmImgInfo* info);
  */
 SigfmImgInfo* sigfm_copy_info(SigfmImgInfo* info);
 
+/**
+ * @brief Whether the info carries the raw frame used by the ridge matcher
+ */
+int sigfm_has_ridge(SigfmImgInfo* info);
+
+/**
+ * @brief Keep a copy of the 8-bit frame for sigfm_ridge_scores()
+ * @details The frame is serialized with the template. Only call this for
+ * devices that use the ridge matcher: it stores the raw image.
+ */
+void sigfm_attach_frame(SigfmImgInfo* info, const SigfmPix* pix, int width,
+                        int height);
+
+/**
+ * @brief Ridge-overlap scores of a frame against enrolled frames
+ *
+ * @param enrolled Array of enrolled infos
+ * @param count Length of enrolled and scores
+ * @param frame Newly captured info
+ * @param scores Output, ECC correlation in [-1, 1]; -1 means no plausible
+ * alignment or no stored frame
+ * @return int 0 on success, -1 on error
+ */
+int sigfm_ridge_scores(SigfmImgInfo* const* enrolled, int count,
+                       SigfmImgInfo* frame, double* scores);
+
 #ifdef __cplusplus
 }
 #endif
