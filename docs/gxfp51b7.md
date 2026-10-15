@@ -20,6 +20,7 @@ general users; see [Prerequisites](#prerequisites) and [Limits](#limits).
 | 48-byte TLS PSK | `src/tls/*`, `tls_constants.h` (+ OpenSSL interop test) |
 | ChicagoHS image decoder | `src/algo/image/decoder.c` (+ test) |
 | Six-channel FDT codec | `src/proto/milan_hu_fdt.c` (+ test; historical name, see below) |
+| Sensor config from OTP | `src/algo/chicago_hs_cfg.c` (+ test) |
 | Session: init, TLS, finger detect, capture | `src/flow/chicago51b7.c`, demo `gxfp51b7_capture` |
 | libfprint driver | `libfprint/libfprint/drivers/gxfp51b7.c` |
 | Ridge-overlap matcher for SIGFM | `sigfm/sigfm.cpp`, `fpi-print.c`, `ridge_threshold` class field (+ tests) |
@@ -46,11 +47,9 @@ None of these are automated by this series.
    Windows keeps it sealed (SGX). On the test machine it was read from the
    EC; that procedure is specific to this EC firmware and is not published.
    5130 provisioning (32 bytes) does not apply.
-3. **Per-sensor material** in `/var/lib/fprint/gxfp51b7/`: `otp.bin` (64),
-   `config.bin` (256) and `manual-seed.bin` (14), taken from a Windows driver
-   capture of the **same** sensor. The session refuses to start unless the
-   live OTP equals `otp.bin` and the config checksum is `0x5a5b`.
-   Generating the config from OTP and a model template is not done yet.
+
+No per-sensor files are needed: the config is built from the sensor's OTP
+at every start (see [Config from OTP](#config-from-otp)).
 
 ## Transport (kernel)
 
@@ -87,13 +86,53 @@ per command, 15 s TLS, 5 s per image. Nothing is retried blindly.
 | firmware string | `a8 00 00` → `GF_9ELIBE_EC_19024` |
 | reset, 200 ms | `a2 05 14` → `01 …` |
 | chip ID | `82 00 00 00 04 00` → `04 a2 00 25` (pair-swapped `2504`) |
-| OTP | `a6 00 00` → 64 bytes, must equal `otp.bin` |
+| OTP | `a6 00 00` → 64 bytes; the config is built from it |
 | reset, idle, timing, config, idle, timing | `a2`, `70 14 00`, `98 88 0c c8 00 c8 00 c8 00`, `90 <config256>` |
 | TLS start / end / state | `d0 00 00`, handshake, `d4 00 00`, `ae 55` → byte 7 = 1 |
+| first MANUAL | `36 0d 01` + zero table; only the readings are kept |
+| config check | `82 00 82 00 02 00` → high byte of `0082` = FDT delta of the config |
 | background | 3 × (`36` MANUAL + `20 01 00` GET_IMAGE), per-pixel median |
 | shutdown | `70 14 00`, `96 00 00` |
 
 The config write is volatile; nothing is flashed.
+
+**First MANUAL.** MANUAL sends the current DOWN table. Windows sends the
+one an earlier session saved in `goodix.dat` (bytes 64..75, after the OTP);
+without that file the table is still zero (`gf_update_all_base`, `5c738`).
+The session does the latter: the touch mask of that reply is meaningless
+(all six channels report touch) and is ignored; the readings become the DOWN
+table of the next MANUAL, which is checked as before.
+
+## Config from OTP
+
+`gxfp_chicago_hs_build_config()` repeats what `gfspi` does:
+
+1. `download_general_config` (`1c11c`) copies the 256-byte template for
+   sensor type 12 from `.data` RVA `93510 + 12 * 0x100`.
+   `device_enable_init_by_chip` (`54ef4`) sets type 12 for chip `0x2504`
+   only, so the template does not depend on the sensor.
+2. `ChicagoHU_check_sensor` (`2e920`) takes `c = OTP[0x2a]` if it is
+   nonzero and the complement of `OTP[0x2b]`, else `OTP[0x2d]` under the same
+   test, else `OTP[0x2a]` if it equals `OTP[0x2d]`. When one is accepted it
+   computes, from `OTP[0x2a]` in every case (as the DLL does):
+   `tcode = ((c >> 4) + 1) * 16 + 64` →
+   register `005c` of the section at header bytes 9/10 (`1c66c`), and the
+   FDT delta (formula above) → high byte of `0082` of the section at
+   header bytes 5/6 (`1c200`). Otherwise the template values stay
+   (tcode `0x100`, delta `0x15`).
+3. Two of the three 2-bit copies in `OTP[0x1b]` (bits 0..1, 4..5, inverted
+   2..3) give the FDT offset; a nonzero offset sets the low byte of `0056` in
+   the 5/6 section to offset + 4 (`1c4c0`).
+4. Each step rewrites the checksum: the 128 LE16 words sum to `0x5a5b` (`1c0b0`).
+
+The three OTP CRC8s (polynomial `0x07`, result inverted; `2e1a0`) are
+checked and logged. Windows carries on when they fail, and so does this.
+
+On the test sensor the config built from its live OTP is byte for byte the
+one Windows sent (`90`) in the early-startup capture. The test covers the
+template, both tcode bytes, defaults, the `0x2d` path, the offset rules and
+the CRC; `GXFP51B7_PRIVATE_VECTORS=<dir>` adds the comparison with a private
+`otp.bin`/`config.bin` pair, printing only the verdict.
 
 **TLS**: the sensor is the client. TLS 1.2, `TLS_PSK_WITH_AES_128_CBC_SHA256`
 (`0x00ae`), identity `Client_identity`, 48-byte PSK. Mbed TLS must allow PSKs
@@ -173,10 +212,12 @@ enrollment coverage, limits this matcher.
 
 ## Limits
 
-- One laptop, one BIOS, one firmware, one sensor's config.
+- One laptop, one BIOS, one firmware, one sensor. The config generator was
+  checked against that sensor only; other OTP values follow the DLL code
+  paths but are untested on hardware.
 - The DMA prerequisite needs a real fix (an RMRR quirk or a supported way to
   add a direct-mapped region), or confirmation that `iommu=pt` works.
-- No config generation from OTP; no PSK provisioning.
+- No PSK provisioning.
 - Suspend (S3) and reboot were tested only with the out-of-tree pieces and
   DKMS packaging that are not part of this series.
 - `D2`, navigation (`50`) and the Windows per-pixel calibration, quality and
