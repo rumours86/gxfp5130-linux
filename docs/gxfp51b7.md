@@ -198,6 +198,26 @@ against the right index template, 2 matched (18.4, 23.6); the other 2 found no
 counterpart (POC at impostor level) and touched parts the 16 enrolled frames
 do not cover. Live and offline scores agree to 0.01.
 
+**Enrollment.** Touches that miss the enrolled frames are the remaining
+genuine misses. In the first 16-stage enrollment 8 of the 16 frames nearly
+repeated another (score 45..67). With `FpImageDeviceClass.ridge_duplicate`
+(40 for `gxfp51b7`) a frame scoring at least that against an enrolled one is
+refused with "move it a little" (at most 3 times in a row), and a blank or
+partial frame always, with "press the whole finger". Replaying the saved
+touches, refusing kept 16 distinct frames and raised later sessions'
+matching touches from 32 to 37 of 48, as many as 24..32 frames without
+refusing; a live 16-stage enrollment took 20 touches. 24 stages were tried
+and dropped: little gain, a false accept rate that grows with the frame
+count, and that trial let in two partial frames before they were refused.
+
+The session matters more than the stages: each template matches its own
+session's touches best (skin moisture, pressure). On the same 83 touches
+from other sessions the first enrollment matched 60, the second 50, and
+both together (32 frames) 69; impostors stayed at most 1.9 against all.
+`scripts/fp-merge-sigfm.py OUT A B` merges enrollments of one finger (the
+format round-trips byte for byte). Live, 9 of 10 touches matched the merged
+template, about 0.13 s per verify.
+
 **False accept rate.** Measured: 0 of 158 impostor attempts (the gallery
 above, the earlier enrollment, and the left index as the enrolled finger
 against all right index frames), 0 of 6240 impostor frame pairs with both
