@@ -89,9 +89,9 @@ per command, 15 s TLS, 5 s per image. Nothing is retried blindly.
 | OTP | `a6 00 00` → 64 bytes; the config is built from it |
 | reset, idle, timing, config, idle, timing | `a2`, `70 14 00`, `98 88 0c c8 00 c8 00 c8 00`, `90 <config256>` |
 | TLS start / end / state | `d0 00 00`, handshake, `d4 00 00`, `ae 55` → byte 7 = 1 |
-| first MANUAL | `36 0d 01` + zero table; only the readings are kept |
-| config check | `82 00 82 00 02 00` → high byte of `0082` = FDT delta of the config |
-| background | 3 × (`36` MANUAL + `20 01 00` GET_IMAGE), per-pixel median |
+| first MANUAL | `36 0d 01` + cached bare table, or a zero table whose readings alone are kept |
+| background | 3 × (`36` MANUAL + `20 01 00` GET_IMAGE), per-pixel median, then `36` |
+| config check | `82 00 82 00 02 00` → high byte of `0082` = FDT delta of the config (only after a MANUAL; before one it read 40 for 31) |
 | shutdown | `70 14 00`, `96 00 00` |
 
 The config write is volatile; nothing is flashed.
@@ -99,9 +99,15 @@ The config write is volatile; nothing is flashed.
 **First MANUAL.** MANUAL sends the current DOWN table. Windows sends the
 one an earlier session saved in `goodix.dat` (bytes 64..75, after the OTP);
 without that file the table is still zero (`gf_update_all_base`, `5c738`).
-The session does the latter: the touch mask of that reply is meaningless
-(all six channels report touch) and is ignored; the readings become the DOWN
-table of the next MANUAL, which is checked as before.
+The session does the same with its own cache, `fdt-base.bin` (14 bytes,
+0600; libfprint keeps it next to the PSK, `FP_GXFP51B7_FDT_CACHE`
+overrides). With a cache a finger that is already down shows in the touch
+mask, as before. Without one the first MANUAL carries a zero table: the
+touch mask of that reply is meaningless (all six channels report touch) and
+is ignored, and the readings become the table of the next MANUAL. A resting
+finger cannot be seen then, so the table is cached after calibration only
+if the background noise is that of a bare sensor. A touch against a cached
+table drops the cache; a stale one costs one failed open.
 
 ## Config from OTP
 
