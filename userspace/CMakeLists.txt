@@ -75,4 +75,13 @@ if(BUILD_TESTING)
 	add_executable(gxfp_fdt_retry_test tests/fdt_retry_test.c)
 	target_link_libraries(gxfp_fdt_retry_test PRIVATE gxfp)
 	add_test(NAME gxfp_fdt_retry_policy COMMAND gxfp_fdt_retry_test)
+
+	# Interop with an independent TLS-PSK client; skipped without OpenSSL.
+	find_package(OpenSSL)
+	if(OpenSSL_FOUND)
+		add_executable(gxfp_tls_psk_test tests/tls_psk_test.c)
+		target_link_libraries(gxfp_tls_psk_test PRIVATE gxfp OpenSSL::SSL)
+		target_compile_options(gxfp_tls_psk_test PRIVATE -Wall -Wextra -Wpedantic)
+		add_test(NAME gxfp_tls_psk_interop COMMAND gxfp_tls_psk_test)
+	endif()
 endif()

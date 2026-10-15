@@ -77,7 +77,7 @@ int gxfp_tls_service_init(struct gxfp_tls_service *svc,
 	struct gxfp_tls_service_impl *s;
 	int r;
 
-	if (!svc || !dev || !psk || psk_len != GXFP5130_PSK_LEN)
+	if (!svc || !dev || !psk || !gxfp_tls_psk_length_valid(psk_len))
 		return -EINVAL;
 	if (svc->impl)
 		return -EALREADY;

@@ -145,9 +145,15 @@ int gxfp_tls_engine_create(struct gxfp_tls_engine **out,
 	struct gxfp_tls_engine *e;
 	int r;
 
-	if (!out || !psk || psk_len != GXFP5130_PSK_LEN || !send_fn)
+	if (!out || !psk || !gxfp_tls_psk_length_valid(psk_len) || !send_fn)
 		return -EINVAL;
 	*out = NULL;
+	/* Mbed TLS 2.x, and 3.x built without TLS 1.3 tickets, cap PSKs at 32. */
+	if (psk_len > MBEDTLS_PSK_MAX_LEN) {
+		fprintf(stderr, "gxfp: %zu-byte PSK needs Mbed TLS with MBEDTLS_PSK_MAX_LEN >= %zu (have %d)\n",
+			psk_len, psk_len, MBEDTLS_PSK_MAX_LEN);
+		return -EOPNOTSUPP;
+	}
 
 	e = (struct gxfp_tls_engine *)calloc(1, sizeof(*e));
 	if (!e)
