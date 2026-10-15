@@ -13,7 +13,8 @@ config GXFP5130
 	  Experimental support for the GXFP51B7 (ChicagoHS) variant is
 	  limited to the Huawei MateBook X Pro 2020 (MACHC-WAX9) with
 	  BIOS 1.26 and needs the mailbox to be identity-mapped in the
-	  IOMMU.
+	  IOMMU: a DMAR override from the initrd that adds the missing
+	  RMRR, or iommu=pt.
 
 	  A character device (/dev/gxfp) is created for userspace access.
 	  The libfprint library uses this interface for biometric enrollment

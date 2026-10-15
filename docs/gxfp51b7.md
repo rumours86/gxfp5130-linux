@@ -30,19 +30,17 @@ The `userspace/` sources are mirrored byte for byte into
 
 ## Prerequisites
 
-None of these are automated by this series.
+None of these are installed by this series; the first one has a helper
+script.
 
-1. **Identity DMA for the mailbox.** The EC writes RX frames into the mailbox
-   through the LPC bridge `00:1f.0`. The firmware has no RMRR for
-   `0x40200000..0x40207fff`, so under a DMA domain these writes fault
-   (`PTE Write access is not set`). The IOMMU group also contains audio,
-   SMBus and SPI, so detaching the group is not an option. The driver checks
-   `iommu_iova_to_phys()` over the whole range and refuses to bind without an
-   identity mapping. `iommu=pt` should satisfy the check but is **untested**.
-   On the test machine a small out-of-tree module reserves those 8 IOVA pages
-   and identity-maps them in the existing domain. It relies on the internal
-   `struct iommu_dma_cookie` layout (checked against the kernel's BTF at build
-   time), so it is not included here.
+1. **Identity DMA for the mailbox.** The EC reads TX frames from the mailbox
+   and writes RX frames into it by DMA through the LPC bridge `00:1f.0`. The
+   firmware has no RMRR for `0x40200000..0x40207fff`, so under a DMA domain
+   these accesses fault (`PTE Read/Write access is not set`). The driver
+   checks `iommu_iova_to_phys()` over the whole range and refuses to bind
+   without an identity mapping. A DMAR override that adds the missing RMRR,
+   or `iommu=pt`, satisfies it; both were tested, see
+   [DMA for the mailbox](#dma-for-the-mailbox).
 2. **The 48-byte PSK** (`/var/lib/fprint/gxfp51b7/psk.bin`, mode 0600).
    Windows keeps it sealed (SGX). On the test machine it was read from the
    EC; that procedure is specific to this EC firmware and is not published.
@@ -50,6 +48,74 @@ None of these are automated by this series.
 
 No per-sensor files are needed: the config is built from the sensor's OTP
 at every start (see [Config from OTP](#config-from-otp)).
+
+## DMA for the mailbox
+
+The IOMMU group of `00:1f.0` also holds audio, SMBus and SPI
+(`00:1f.3`..`00:1f.5`), so the group cannot be detached or given a domain of
+its own. Two configurations pass the driver's check without any out-of-tree
+module:
+
+| | DMAR override with an RMRR | `iommu=pt` |
+|---|---|---|
+| What changes | one RMRR added to the firmware DMAR, loaded from the initrd | every device gets an identity domain |
+| Group of `00:1f.0` | `DMA-FQ`; `reserved_regions` lists `0x40200000..0x40207fff direct` | `identity` |
+| DMA isolation of other devices | kept | lost |
+| Needs | `CONFIG_ACPI_TABLE_UPGRADE=y`, no kernel lockdown | a kernel parameter |
+| Result | bind; verify 3/3; S3, lock screen unlocked by the finger, verify 3/3 | bind; verify 2/3 (the miss was a matcher no-match, the frame arrived) |
+| DMAR faults | 0 | 0 |
+
+Tested on 15 October 2026 with kernel 7.0.0-38, each after a reboot with
+`module_blacklist=gxfp51b7_window`, so the earlier out-of-tree window module
+could not load. `gxfp` was loaded by udev and bound on its own.
+
+### DMAR override
+
+`scripts/gxfp51b7-dmar-rmrr.py` reads the running DMAR, adds one RMRR for
+`00:1f.0` over the `GXFP51B7:00` memory range from `/proc/iomem`, bumps the
+OEM revision and writes `DMAR.aml` and a newc cpio holding
+`kernel/firmware/acpi/DMAR.aml`. It stops if the range is not reserved in the
+firmware memory map (the kernel's RMRR sanity check expects that, and an RMRR
+over RAM would expose that RAM to the EC) or if an RMRR already covers it.
+It installs nothing.
+
+```sh
+sudo python3 scripts/gxfp51b7-dmar-rmrr.py -o /tmp/gxfp51b7-dmar
+sudo install -m 0644 /tmp/gxfp51b7-dmar/gxfp51b7-dmar.cpio /boot/
+```
+
+The cpio must come before the distribution initrd
+(`Documentation/admin-guide/acpi/initrd_table_override.rst`). It was tested
+by listing it first on the GRUB `initrd` line:
+
+```
+initrd /boot/gxfp51b7-dmar.cpio /boot/initrd.img-7.0.0-38-generic
+```
+
+On Debian and Ubuntu, `GRUB_EARLY_INITRD_LINUX_CUSTOM="gxfp51b7-dmar.cpio"`
+in `/etc/default/grub` (or a file in `/etc/default/grub.d/`) and
+`update-grub` write that line for every kernel, recovery entries included.
+The test machine now boots this way with no window module installed: after
+a normal reboot and after S3 every touch produced a frame and no DMAR fault
+was logged (the matcher accepted 4 of 5 touches, then 1 of 3 after resume).
+Expected kernel log:
+
+```
+ACPI: Table Upgrade: override [DMAR-HUAWEI- CFL-ULT]
+DMAR: RMRR base: 0x00000040200000 end: 0x00000040207fff
+```
+
+The IOMMU core maps direct regions into the default DMA domain when the
+device is added, as it does for the firmware's own RMRRs (USB, graphics).
+
+- The override replaces the DMAR by OEM ID and table ID whatever the BIOS
+  version. After a BIOS update, boot without the cpio and rebuild it: while
+  the override is active, `/sys/firmware/acpi/tables/DMAR` is the overridden
+  table and the script stops with "an RMRR already covers".
+- A direct region pins `00:1f.0` to its default domain; the group cannot be
+  passed to VFIO.
+- A kernel quirk adding the range for `MACHC-WAX9` would remove the initrd
+  step. It is not written.
 
 ## Transport (kernel)
 
@@ -317,10 +383,11 @@ frames that nearly coincide agree for any probe).
 - One laptop, one BIOS, one firmware, one sensor. The config generator was
   checked against that sensor only; other OTP values follow the DLL code
   paths but are untested on hardware.
-- The DMA prerequisite needs a real fix (an RMRR quirk or a supported way to
-  add a direct-mapped region), or confirmation that `iommu=pt` works.
+- The DMA prerequisite needs a DMAR override from the initrd
+  (`scripts/gxfp51b7-dmar-rmrr.py`) or `iommu=pt`; there is no kernel quirk.
 - No PSK provisioning.
-- Suspend (S3) and reboot were tested only with the out-of-tree pieces and
-  DKMS packaging that are not part of this series.
+- Reboot and suspend (S3) were tested with the DMAR override and no window
+  module. Surviving kernel updates was tested only with DKMS packaging that
+  is not part of this series.
 - `D2`, navigation (`50`) and the Windows per-pixel calibration, quality and
   coverage paths (`WBDI 12210`/`17740`) are not ported.

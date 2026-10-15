@@ -42,7 +42,8 @@ static int gxfp_51b7_check_dma(struct platform_device *pdev)
 	 * The EC writes RX frames into the mailbox through the LPC bridge
 	 * (00:1f.0). The firmware has no RMRR for this range, so under a DMA
 	 * domain those writes fault. Refuse traffic unless the range is
-	 * identity-mapped (iommu=pt, or a mapping set up beforehand).
+	 * identity-mapped: an RMRR added by a DMAR override, or iommu=pt
+	 * (docs/gxfp51b7.md).
 	 */
 	domain = iommu_get_domain_for_dev(&lpc->dev);
 	if (domain && domain->type != IOMMU_DOMAIN_IDENTITY) {

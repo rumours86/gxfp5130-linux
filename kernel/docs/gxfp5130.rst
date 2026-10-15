@@ -99,7 +99,8 @@ verified on.
 - The EC writes RX frames into the mailbox by DMA from the LPC bridge
   (00:1f.0). The firmware provides no RMRR for the mailbox range, so the
   driver refuses to bind unless that range is identity-mapped in the
-  bridge's IOMMU domain.
+  bridge's IOMMU domain. A DMAR override loaded from the initrd that adds
+  the RMRR, or ``iommu=pt``, provides that mapping.
 
 Supported hardware
 ------------------
