@@ -80,9 +80,9 @@ typedef enum {
  * FpImageDeviceClass:
  * @bz3_threshold: Threshold to consider bozorth3 score a match, default: 40
  * @ridge_threshold: SIGFM only. If above 0, the captured frame is stored in
- *   the print and a ridge-overlap score (mean of the two best enrolled
- *   frames) at or above this value is also a match. Default 0 (off). The
- *   FP_SIGFM_RIDGE_THRESHOLD environment variable overrides it.
+ *   the print and a ridge score (best enrolled frame, see
+ *   sigfm_ridge_scores()) at or above this value is also a match. Default 0
+ *   (off). The FP_SIGFM_RIDGE_THRESHOLD environment variable overrides it.
  * @img_width: Width of the image, only provide if constant
  * @img_height: Height of the image, only provide if constant
  * @img_open: Open the device and do basic initialization

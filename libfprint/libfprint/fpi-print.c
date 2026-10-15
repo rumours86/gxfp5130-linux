@@ -278,10 +278,10 @@ fpi_print_bz3_match (FpPrint *template, FpPrint *print, gint bz3_threshold, GErr
  * Match the newly scanned @print (containing exactly one print) against the
  * prints contained in @template which will have been stored during enrollment.
  *
- * If @ridge_threshold is above 0 and the prints carry their frames, the mean
- * ridge-overlap score of the two best enrolled frames is checked first.
- * Requiring two frames means one chance alignment of periodic ridges is not
- * enough. Otherwise, or if that fails, the SIGFM score decides.
+ * If @ridge_threshold is above 0 and the prints carry their frames, the best
+ * ridge score over the enrolled frames is checked first (see
+ * sigfm_ridge_scores()). Otherwise, or if that fails, the SIGFM score
+ * decides.
  *
  * Both @template and @print need to be of type #FPI_PRINT_SIGFM for this to
  * work.
@@ -308,28 +308,15 @@ fpi_print_sigfm_match (FpPrint * template, FpPrint * print,
     {
       guint n = template->prints->len;
       g_autofree gdouble *scores = g_new (gdouble, n);
-      gdouble first = -1, second = -1;
+      gdouble best = -G_MAXDOUBLE;
 
       if (sigfm_ridge_scores ((SigfmImgInfo * const *) template->prints->pdata,
                               n, against, scores) == 0)
         {
           for (guint i = 0; i < n; i++)
-            {
-              if (scores[i] > first)
-                {
-                  second = first;
-                  first = scores[i];
-                }
-              else if (scores[i] > second)
-                {
-                  second = scores[i];
-                }
-            }
-          if (n == 1)
-            second = first;
-          fp_dbg ("ridge score %.3f/%.3f (best %.3f, %u frames)",
-                  (first + second) / 2, ridge_threshold, first, n);
-          if ((first + second) / 2 >= ridge_threshold)
+            best = MAX (best, scores[i]);
+          fp_dbg ("ridge score %.2f/%.2f (%u frames)", best, ridge_threshold, n);
+          if (best >= ridge_threshold)
             return FPI_MATCH_SUCCESS;
         }
     }

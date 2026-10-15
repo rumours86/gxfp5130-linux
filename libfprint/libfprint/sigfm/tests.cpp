@@ -196,31 +196,59 @@ TEST_SUITE("ridge")
         return result;
     }
 
-    TEST_CASE("an identical frame aligns")
+    // The GXFP51B7 threshold, see drivers/gxfp51b7.c.
+    constexpr double threshold = 10;
+
+    TEST_CASE("an identical frame matches")
     {
         const auto f = crop(88, 96);
-        CHECK(score(f, f) > 0.95);
+        CHECK(score(f, f) > 50);
     }
 
-    TEST_CASE("a shifted touch aligns")
+    TEST_CASE("a shifted touch matches")
     {
-        CHECK(score(crop(88, 96), crop(88, 96, 9, -6)) > 0.8);
+        CHECK(score(crop(88, 96), crop(88, 96, 9, -6)) > threshold);
     }
 
-    TEST_CASE("another part of the print stays below the 51B7 threshold")
+    TEST_CASE("a rotated touch matches")
     {
-        // Periodic ridges still correlate: this pair scores about 0.72, and
-        // across 456 non-overlapping pairs of this image the maximum is 0.815.
-        CHECK(score(crop(88, 96), crop(20, 150)) < 0.8);
+        const cv::Mat print(256, 256, CV_8UC1,
+                            const_cast<unsigned char*>(embedded::capture_aes3500));
+        cv::Mat turned;
+        cv::warpAffine(print, turned,
+                       cv::getRotationMatrix2D(cv::Point2f(128, 128), 12, 1),
+                       print.size(), cv::INTER_LINEAR);
+        const cv::Mat probe = turned(cv::Rect(88, 96, 80, 64)).clone();
+        CHECK(score(crop(88, 96),
+                    std::vector<SigfmPix>(probe.datastart, probe.dataend)) >
+              threshold);
+    }
+
+    TEST_CASE("other parts of the print stay below the threshold")
+    {
+        // Periodic ridges correlate, but neither score holds up without a
+        // true correspondence: these 132 pairs score at most 1.2.
+        double worst = -100;
+        for (int a = 0; a < 12; a++) {
+            for (int b = 0; b < 12; b++) {
+                if (a != b) {
+                    worst = std::max(worst, score(crop(a % 3 * 80, a / 3 * 64),
+                                                  crop(b % 3 * 80, b / 3 * 64)));
+                }
+            }
+        }
+        CHECK(worst < 2);
+        // The highest of 17384 non-overlapping pairs on a 16 px grid.
+        CHECK(score(crop(96, 96), crop(64, 0)) < threshold);
     }
 
     TEST_CASE("a flat frame is rejected")
     {
         const std::vector<SigfmPix> flat(80 * 64, 128);
-        CHECK(score(crop(88, 96), flat) == -1);
+        CHECK(score(crop(88, 96), flat) == -100);
     }
 
-    TEST_CASE("frames without a stored image score -1")
+    TEST_CASE("frames without a stored image score -100")
     {
         SigfmImgInfo a{};
         SigfmImgInfo b{};
@@ -229,7 +257,7 @@ TEST_SUITE("ridge")
         SigfmImgInfo* gallery[] = {&a};
         double result = 0;
         REQUIRE(sigfm_ridge_scores(gallery, 1, &b, &result) == 0);
-        CHECK(result == -1);
+        CHECK(result == -100);
     }
 
     TEST_CASE("the frame survives serialization")

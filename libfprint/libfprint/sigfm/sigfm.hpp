@@ -107,13 +107,19 @@ void sigfm_attach_frame(SigfmImgInfo* info, const SigfmPix* pix, int width,
                         int height);
 
 /**
- * @brief Ridge-overlap scores of a frame against enrolled frames
+ * @brief Ridge scores of a frame against enrolled frames
+ *
+ * Two scores per enrolled frame, each as a z-score against impostor pairs
+ * measured on the GXFP51B7: the band-limited phase-only correlation peak, and
+ * the correlation of the residual left after smoothing along the ridges, at
+ * the pose that peak gives. The result is their sum when both are at least
+ * 2, otherwise the smaller of the two.
  *
  * @param enrolled Array of enrolled infos
  * @param count Length of enrolled and scores
  * @param frame Newly captured info
- * @param scores Output, ECC correlation in [-1, 1]; -1 means no plausible
- * alignment or no stored frame
+ * @param scores Output; -100 means no plausible pose, no stored frame or a
+ * different frame size
  * @return int 0 on success, -1 on error
  */
 int sigfm_ridge_scores(SigfmImgInfo* const* enrolled, int count,

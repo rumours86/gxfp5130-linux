@@ -34,15 +34,17 @@
 #define GXFP51B7_POLL_MS               20
 
 /*
- * Ridge-overlap threshold (see fpi_print_sigfm_match()). SIGFM alone almost
- * never matches separate touches on this 80x64 sensor. One user, one
- * enrollment of the right index finger: 30 of 41 genuine touches matched
- * (20 of 24 ordinary ones), 38 impostor touches (left index, other
- * fingers) scored at most 0.73. That bounds the false accept rate only
- * loosely: below ~8% per attempt at 95% confidence. On non-overlapping 80x64 crops of another
- * sensor's print, 1 of 25 probes reached 0.80 against a 16..21 frame gallery.
+ * Ridge score threshold (see sigfm_ridge_scores()). SIGFM alone almost never
+ * matches separate touches on this 80x64 sensor. One user, one 16-frame
+ * enrollment of the right index finger: 20 of 24 ordinary touches matched
+ * and 26 of 38 off-centre or older ones, scoring 11.5..58. The misses found
+ * no true counterpart in the enrolled frames with any method tried. 158
+ * impostor attempts (left index, other fingers) scored at most 1.9: none
+ * reached 2 on both scores. Of 17384 non-overlapping pairs of 80x64 crops of
+ * another sensor's print, one reached 9.2. The false accept rate is an
+ * estimate, not a measurement: see docs/gxfp51b7.md.
  */
-#define GXFP51B7_RIDGE_THRESHOLD 0.80
+#define GXFP51B7_RIDGE_THRESHOLD 10.0
 
 typedef enum {
   JOB_NONE,

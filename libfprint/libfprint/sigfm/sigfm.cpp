@@ -155,13 +155,47 @@ SigfmImgInfo* sigfm_extract(const SigfmPix* pix, int width, int height)
 }
 
 namespace {
-// Ridge-overlap matcher for small press sensors (GXFP51B7, 80x64). SIGFM's
-// sparse keypoints tolerate only 5% length change, so two separate touches of
-// the same finger, pressed with different force, often score zero. Here the
-// high-passed ridge images are aligned with a rigid ECC instead. An affine
-// fit was tried first: it stretched and sheared other fingers' ridges onto
-// the enrolled ones (0.79 for a wrong finger against 0.69 for a true touch),
-// while true touches needed almost no stretch.
+// Ridge matcher for small press sensors (GXFP51B7, 80x64). SIGFM's sparse
+// keypoints tolerate only 5% length change, so two separate touches of the
+// same finger, pressed with different force, often score zero.
+//
+// Plain correlation of aligned ridge images is not enough either: on an
+// 80x64 patch most fingers show near-parallel ridges of similar spacing, and
+// a rigid fit of another finger reached 0.73..0.78 against 0.81..0.95 for
+// true touches. So two scores are used that do not depend on the
+// parallel-ridge pattern:
+//
+// - Phase-only correlation (Ito et al.) of the high-passed frames, band
+//   limited to half the Nyquist frequency, the probe rotated in 2 degree
+//   steps. Whitening the spectrum makes ridge endings, bifurcations and pores
+//   count as much as the dominant ridge frequency. The peak gives the pose
+//   too, which a rigid ECC then refines.
+// - The residual: each frame minus itself smoothed along the local ridge
+//   direction. It keeps exactly the detail that parallel ridges lack, and its
+//   correlation at the refined pose is near zero unless the pose is a true
+//   correspondence.
+//
+// Each is turned into a z-score against impostor pairs measured on the
+// GXFP51B7 (6240 pairs of the enrolled right index against other fingers of
+// the same person). For those pairs the two scores are uncorrelated
+// (r = 0.04), also in the tail, so requiring both multiplies their chance
+// rates. An affine fit was tried for the pose and dropped: it stretched other
+// fingers' ridges onto the enrolled ones.
+constexpr int poc_width = 160; // zero padding: no wrap-around for 80x64
+constexpr int poc_height = 128;
+constexpr double poc_band = 0.5;
+constexpr int poc_max_angle = 30;
+constexpr int poc_angle_step = 2;
+constexpr int poc_max_dx = 40;
+constexpr int poc_max_dy = 32;
+constexpr double residual_mean = 0.0625;
+constexpr double residual_sd = 0.0455;
+constexpr double poc_mean = 0.1335;
+constexpr double poc_sd = 0.0113;
+// Both scores need at least this much evidence on their own.
+constexpr double ridge_min_z = 2;
+constexpr double ridge_none = -100;
+
 bool ridge_prepare(const cv::Mat& raw, cv::Mat& out)
 {
     cv::Mat blur;
@@ -183,79 +217,246 @@ bool ridge_plausible(const cv::Mat& w, cv::Size size)
     return coverage > .45;
 }
 
-double ridge_score(const cv::Mat& reference, const cv::Mat& probe)
+// Local direction along the ridges, from the smoothed structure tensor.
+cv::Mat ridge_orientation(const cv::Mat& hp)
 {
-    if (reference.size() != probe.size()) {
-        return -1;
+    cv::Mat gx, gy;
+    cv::Sobel(hp, gx, CV_32F, 1, 0, 3);
+    cv::Sobel(hp, gy, CV_32F, 0, 1, 3);
+    cv::Mat jxx = gx.mul(gx), jyy = gy.mul(gy), jxy = gx.mul(gy);
+    for (auto* j : {&jxx, &jyy, &jxy}) {
+        cv::GaussianBlur(*j, *j, cv::Size(), 4);
     }
-    cv::Mat x, y;
-    if (!ridge_prepare(reference, x) || !ridge_prepare(probe, y)) {
-        return -1;
+    cv::Mat ori(hp.size(), CV_32F);
+    for (int y = 0; y < hp.rows; y++) {
+        for (int x = 0; x < hp.cols; x++) {
+            const float a = jxx.at<float>(y, x), b = jyy.at<float>(y, x),
+                        c = jxy.at<float>(y, x);
+            ori.at<float>(y, x) = 0.5f * std::atan2(2 * c, a - b) + CV_PI / 2;
+        }
     }
-    // Zero rows/columns at the probe border were never observed.
+    return ori;
+}
+
+// The frame minus itself smoothed along the ridges (Gaussian, sigma 3 px).
+cv::Mat ridge_residual(const cv::Mat& hp)
+{
+    constexpr double sigma = 3;
+    constexpr int reach = 8;
+    float weights[2 * reach + 1];
+    for (int t = -reach; t <= reach; t++) {
+        weights[t + reach] = std::exp(-0.5 * t * t / (sigma * sigma));
+    }
+    const cv::Mat ori = ridge_orientation(hp);
+    cv::Mat out(hp.size(), CV_32F);
+    for (int y = 0; y < hp.rows; y++) {
+        for (int x = 0; x < hp.cols; x++) {
+            const float th = ori.at<float>(y, x);
+            const float cx = std::cos(th), cy = std::sin(th);
+            double sum = 0, wsum = 0;
+            for (int t = -reach; t <= reach; t++) {
+                const float px = x + t * cx, py = y + t * cy;
+                if (px < 0 || py < 0 || px > hp.cols - 1 || py > hp.rows - 1) {
+                    continue;
+                }
+                const int x0 = int(px), y0 = int(py);
+                const int x1 = std::min(x0 + 1, hp.cols - 1);
+                const int y1 = std::min(y0 + 1, hp.rows - 1);
+                const float fx = px - x0, fy = py - y0;
+                const float v = (1 - fx) * (1 - fy) * hp.at<float>(y0, x0) +
+                                fx * (1 - fy) * hp.at<float>(y0, x1) +
+                                (1 - fx) * fy * hp.at<float>(y1, x0) +
+                                fx * fy * hp.at<float>(y1, x1);
+                sum += weights[t + reach] * v;
+                wsum += weights[t + reach];
+            }
+            out.at<float>(y, x) = hp.at<float>(y, x) - float(sum / wsum);
+        }
+    }
+    return out;
+}
+
+// Unit-magnitude spectrum inside the band, zero elsewhere.
+cv::Mat poc_spectrum(const cv::Mat& hp, const cv::Mat& mask)
+{
+    cv::Mat win, soft;
+    cv::createHanningWindow(win, hp.size(), CV_32F);
+    mask.convertTo(soft, CV_32F, 1. / 255);
+    cv::GaussianBlur(soft, soft, cv::Size(), 2);
+    cv::Mat pad(poc_height, poc_width, CV_32F, cv::Scalar(0));
+    cv::Mat(hp.mul(win).mul(soft))
+        .copyTo(pad(cv::Rect((poc_width - hp.cols) / 2,
+                             (poc_height - hp.rows) / 2, hp.cols, hp.rows)));
+    cv::Mat spectrum;
+    cv::dft(pad, spectrum, cv::DFT_COMPLEX_OUTPUT);
+    for (int y = 0; y < poc_height; y++) {
+        const int fy = y <= poc_height / 2 ? y : y - poc_height;
+        for (int x = 0; x < poc_width; x++) {
+            const int fx = x <= poc_width / 2 ? x : x - poc_width;
+            auto& v = spectrum.at<cv::Vec2f>(y, x);
+            const float mag = std::hypot(v[0], v[1]);
+            const bool kept =
+                std::abs(fx) <= poc_band * poc_width / 2 &&
+                std::abs(fy) <= poc_band * poc_height / 2 && (fx || fy);
+            v = kept && mag > 1e-12f ? v / mag : cv::Vec2f(0, 0);
+        }
+    }
+    return spectrum;
+}
+
+int poc_kept()
+{
+    int kept = 0;
+    for (int fy = -poc_height / 2 + 1; fy <= poc_height / 2; fy++) {
+        for (int fx = -poc_width / 2 + 1; fx <= poc_width / 2; fx++) {
+            kept += std::abs(fx) <= poc_band * poc_width / 2 &&
+                    std::abs(fy) <= poc_band * poc_height / 2 && (fx || fy);
+        }
+    }
+    return kept;
+}
+
+// Only shifts that leave the frames overlapping.
+cv::Mat poc_shift_mask()
+{
+    cv::Mat m(poc_height, poc_width, CV_8U, cv::Scalar(0));
+    for (int y = 0; y < poc_height; y++) {
+        const int sy = y <= poc_height / 2 ? y : y - poc_height;
+        for (int x = 0; x < poc_width; x++) {
+            const int sx = x <= poc_width / 2 ? x : x - poc_width;
+            if (std::abs(sx) <= poc_max_dx && std::abs(sy) <= poc_max_dy) {
+                m.at<uchar>(y, x) = 255;
+            }
+        }
+    }
+    return m;
+}
+
+struct RidgeFrame {
+    cv::Mat hp, mask, residual;
+    // The reference keeps one spectrum, the probe one per rotation.
+    std::vector<cv::Mat> spectra;
+    std::vector<int> angles;
+};
+
+bool ridge_frame(const cv::Mat& raw, bool rotations, RidgeFrame& f)
+{
+    if (!ridge_prepare(raw, f.hp)) {
+        return false;
+    }
+    // Zero rows/columns at the border were never observed.
     std::vector<cv::Point> observed;
-    cv::findNonZero(probe, observed);
+    cv::findNonZero(raw, observed);
     if (observed.empty()) {
+        return false;
+    }
+    f.mask = cv::Mat(raw.size(), CV_8U, cv::Scalar(0));
+    f.mask(cv::boundingRect(observed)).setTo(255);
+    cv::erode(f.mask, f.mask, cv::Mat::ones(7, 7, CV_8U));
+    f.residual = ridge_residual(f.hp);
+    if (!rotations) {
+        f.spectra.push_back(poc_spectrum(f.hp, f.mask));
+        f.angles.push_back(0);
+        return true;
+    }
+    const cv::Point2f centre(raw.cols / 2.f, raw.rows / 2.f);
+    for (int a = -poc_max_angle; a <= poc_max_angle; a += poc_angle_step) {
+        const cv::Mat r = cv::getRotationMatrix2D(centre, a, 1);
+        cv::Mat hp, mask;
+        cv::warpAffine(f.hp, hp, r, raw.size(), cv::INTER_LINEAR);
+        cv::warpAffine(f.mask, mask, r, raw.size(), cv::INTER_NEAREST);
+        f.spectra.push_back(poc_spectrum(hp, mask));
+        f.angles.push_back(a);
+    }
+    return true;
+}
+
+double masked_ncc(const cv::Mat& a, const cv::Mat& b, const cv::Mat& mask)
+{
+    if (cv::countNonZero(mask) < 50) {
         return -1;
     }
-    cv::Mat mask(probe.size(), CV_8U, cv::Scalar(0));
-    mask(cv::boundingRect(observed)).setTo(255);
-    cv::erode(mask, mask, cv::Mat::ones(7, 7, CV_8U));
+    cv::Scalar ma, sa, mb, sb;
+    cv::meanStdDev(a, ma, sa, mask);
+    cv::meanStdDev(b, mb, sb, mask);
+    if (sa[0] < 1e-9 || sb[0] < 1e-9) {
+        return -1;
+    }
+    cv::Mat pa = a - ma[0], pb = b - mb[0];
+    return cv::mean(pa.mul(pb), mask)[0] / (sa[0] * sb[0]);
+}
 
-    const cv::Point2f centre(probe.cols / 2.f, probe.rows / 2.f);
-    std::vector<cv::Mat> seeds;
-    const auto shift = cv::phaseCorrelate(x, y);
-    seeds.push_back((cv::Mat_<float>(2, 3) << 1, 0, shift.x, 0, 1, shift.y));
-    for (int angle = -30; angle <= 30; angle += 10) {
-        for (int dx = -20; dx <= 20; dx += 10) {
-            for (int dy = -16; dy <= 16; dy += 8) {
-                cv::Mat w;
-                cv::getRotationMatrix2D(centre, angle, 1).convertTo(w, CV_32F);
-                w.at<float>(0, 2) += dx;
-                w.at<float>(1, 2) += dy;
-                seeds.push_back(w);
-            }
+// Raw scores: POC peak (about 1 for identical frames) and the residual
+// correlation at the refined pose (-1 when there is no plausible pose).
+void ridge_compare(const RidgeFrame& ref, const RidgeFrame& probe,
+                   double& poc, double& residual)
+{
+    static const double scale = double(poc_width * poc_height) / poc_kept();
+    static const cv::Mat shifts = poc_shift_mask();
+    poc = 0;
+    residual = -1;
+    cv::Point peak;
+    int angle = 0;
+    cv::Mat cross, surface;
+    for (std::size_t k = 0; k < probe.spectra.size(); k++) {
+        cv::mulSpectrums(ref.spectra[0], probe.spectra[k], cross, 0, true);
+        cv::idft(cross, surface, cv::DFT_REAL_OUTPUT | cv::DFT_SCALE);
+        double top;
+        cv::Point at;
+        cv::minMaxLoc(surface, nullptr, &top, nullptr, &at, shifts);
+        if (top * scale > poc) {
+            poc = top * scale;
+            peak = at;
+            angle = probe.angles[k];
         }
     }
+    if (poc <= 0) {
+        return;
+    }
+    // The probe rotated by `angle` and shifted by the peak matches the
+    // reference: reference(x) ~ rotated(x - p) = probe(R^-1 (x - p)).
+    const float px = peak.x <= poc_width / 2 ? peak.x : peak.x - poc_width;
+    const float py = peak.y <= poc_height / 2 ? peak.y : peak.y - poc_height;
+    const cv::Size size = probe.hp.size();
+    cv::Mat inv, w;
+    cv::invertAffineTransform(
+        cv::getRotationMatrix2D(cv::Point2f(size.width / 2.f, size.height / 2.f),
+                                angle, 1),
+        inv);
+    inv.convertTo(w, CV_32F);
+    w.at<float>(0, 2) -= w.at<float>(0, 0) * px + w.at<float>(0, 1) * py;
+    w.at<float>(1, 2) -= w.at<float>(1, 0) * px + w.at<float>(1, 1) * py;
+    try {
+        cv::findTransformECC(
+            ref.hp, probe.hp, w, cv::MOTION_EUCLIDEAN,
+            cv::TermCriteria(cv::TermCriteria::COUNT | cv::TermCriteria::EPS,
+                             80, 1e-5),
+            probe.mask, 3);
+    }
+    catch (const cv::Exception&) {
+        return;
+    }
+    if (!ridge_plausible(w, size)) {
+        return;
+    }
+    cv::Mat mask, res;
+    cv::warpAffine(probe.mask, mask, w, size,
+                   cv::INTER_NEAREST | cv::WARP_INVERSE_MAP);
+    cv::warpAffine(probe.residual, res, w, size,
+                   cv::INTER_LINEAR | cv::WARP_INVERSE_MAP);
+    residual = masked_ncc(ref.residual, res, ref.mask & mask);
+}
 
-    // A short ECC run ranks the seeds; only the best few are refined. On the
-    // labelled corpus this gives the same maxima as refining every seed.
-    std::vector<std::pair<double, cv::Mat>> coarse;
-    for (const auto& seed : seeds) {
-        cv::Mat w = seed.clone();
-        try {
-            const double s = cv::findTransformECC(
-                x, y, w, cv::MOTION_EUCLIDEAN,
-                cv::TermCriteria(cv::TermCriteria::COUNT | cv::TermCriteria::EPS,
-                                 6, 1e-4),
-                mask, 3);
-            coarse.emplace_back(s, w);
-        }
-        catch (const cv::Exception&) {
-        }
+double ridge_score(const RidgeFrame& ref, const RidgeFrame& probe)
+{
+    double poc, residual;
+    ridge_compare(ref, probe, poc, residual);
+    if (residual <= -1) {
+        return ridge_none;
     }
-    std::sort(coarse.begin(), coarse.end(),
-              [](const auto& a, const auto& b) { return a.first > b.first; });
-    if (coarse.size() > 3) {
-        coarse.resize(3);
-    }
-
-    double best = -1;
-    for (auto& [unused, w] : coarse) {
-        try {
-            const double s = cv::findTransformECC(
-                x, y, w, cv::MOTION_EUCLIDEAN,
-                cv::TermCriteria(cv::TermCriteria::COUNT | cv::TermCriteria::EPS,
-                                 80, 1e-5),
-                mask, 3);
-            if (s > best && ridge_plausible(w, probe.size())) {
-                best = s;
-            }
-        }
-        catch (const cv::Exception&) {
-        }
-    }
-    return best;
+    const double zp = (poc - poc_mean) / poc_sd;
+    const double zr = (residual - residual_mean) / residual_sd;
+    return std::min(zp, zr) < ridge_min_z ? std::min(zp, zr) : zp + zr;
 }
 } // namespace
 
@@ -272,11 +473,18 @@ int sigfm_ridge_scores(SigfmImgInfo* const* enrolled, int count,
                        SigfmImgInfo* frame, double* scores)
 {
     try {
+        RidgeFrame probe;
+        const bool probe_ok =
+            !frame->ridge.empty() && ridge_frame(frame->ridge, true, probe);
         cv::parallel_for_(cv::Range(0, count), [&](const cv::Range& range) {
             for (int i = range.start; i < range.end; i++) {
-                scores[i] = enrolled[i]->ridge.empty() || frame->ridge.empty()
-                                ? -1
-                                : ridge_score(enrolled[i]->ridge, frame->ridge);
+                RidgeFrame ref;
+                scores[i] = probe_ok && !enrolled[i]->ridge.empty() &&
+                                    enrolled[i]->ridge.size() ==
+                                        frame->ridge.size() &&
+                                    ridge_frame(enrolled[i]->ridge, false, ref)
+                                ? ridge_score(ref, probe)
+                                : ridge_none;
             }
         });
         return 0;
