@@ -409,8 +409,9 @@ static int manual_bootstrap(struct gxfp51b7 *s)
 }
 
 /*
- * 0x82: register 0082 holds the FDT delta in its high byte; Windows reads it
- * at the same point. A match shows the generated config is the live one.
+ * 0x82: register 0082 holds the FDT delta in its high byte once a MANUAL has
+ * applied the FDT section of the config; Windows reads it after two. A
+ * match shows the generated config is the live one.
  * Like the chip ID the reply is pair-swapped, so the high byte comes first.
  */
 static int check_fdt_delta(struct gxfp51b7 *s, uint8_t delta)
@@ -585,8 +586,6 @@ int gxfp51b7_open(struct gxfp51b7 **out, const char *dev, const char *keypath,
 		ret = start_tls(s);
 	if (!ret && !have_cache)
 		ret = manual_bootstrap(s);
-	if (!ret)
-		ret = check_fdt_delta(s, cal.fdt_delta);
 	if (ret)
 		goto fail;
 	/* FDT UP margin; the template default when the OTP had no tcode. */
@@ -631,6 +630,9 @@ int gxfp51b7_open(struct gxfp51b7 **out, const char *dev, const char *keypath,
 		if (s->noise < 2)
 			s->noise = 2;
 		ret = manual(s, s->seed);
+		/* After a MANUAL, as Windows: before one it read 40 for a config of 31. */
+		if (!ret)
+			ret = check_fdt_delta(s, cal.fdt_delta);
 		session_log(s, "51B7 calibration: 3 background frames; noise99=%d delta=%d (%s)\n",
 			    s->noise, s->delta, have_cache ? "cached FDT base" : "zero-table start");
 	}
