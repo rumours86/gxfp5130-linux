@@ -40,7 +40,7 @@
  * and 25 of 38 off-centre or older ones, scoring 13.7..58. The misses found
  * no true counterpart in the enrolled frames with any method tried. 158
  * impostor attempts (left index, other fingers) scored at most 1.9: none
- * reached 2 on both scores. Another person's fingers, 9 touches against two
+ * reached 2 on both scores. Family members' fingers, 18 touches against two
  * enrolled fingers, scored at most 5.3. Of 17384 non-overlapping pairs of
  * 80x64 crops of another sensor's print, one reached 9.2. The false accept
  * rate is an estimate, not a measurement: see docs/gxfp51b7.md.

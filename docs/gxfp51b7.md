@@ -194,20 +194,21 @@ do not cover. Live and offline scores agree to 0.01.
 **False accept rate.** Measured: 0 of 158 impostor attempts (the gallery
 above, the earlier enrollment, and the left index as the enrolled finger
 against all right index frames), 0 of 6240 impostor frame pairs with both
-scores ≥ 2. Another person (a family member) touched 9 times, live and
-offline against both enrolled fingers (288 frame pairs): all rejected, at
-most 5.3, and one pair was ≥ 2 on both scores. That is more than the
-same-person pairs predict (about 0.03 such pairs in 288), so other people's
-tails are likely heavier, and the threshold was raised from 10 to 12.
+scores ≥ 2. Family members touched 18 times (two series, various fingers),
+checked live and offline against both enrolled fingers (576 frame pairs):
+all rejected, at most 5.3, and one pair was ≥ 2 on both scores. That is more
+than the same-person pairs predict (about 0.06 such pairs in 576), so other
+people's tails are likely heavier, and the threshold was raised from 10 to
+12 after the first series.
 
 An estimate, not a measurement: exponential tails fitted to the same-person
 z-scores (above 2.5 for POC, 114 pairs; above 1.5 for the residual, 130
-pairs), independence, and the other person's rate of reaching 5.3 (1 in 288,
-95% upper bound 4.7 in 288) scaled along those tails to 12. That gives ~3e-7
-per frame pair (≤ 1.3e-6), so ~1e-5 per attempt with two enrolled fingers
-(32 frames, PAM identifies against all of them), ≤ 4e-5. At 10 it would be
-~1.6e-4. This rests on one person's fingers plus one other person's nine
-touches. Gaussian tails would be far too optimistic: the POC tail is much
+pairs), independence, and the family members' rate of reaching 5.3 (1 in
+576, 95% upper bound 4.7 in 576) scaled along those tails to 12. That gives
+~1.4e-7 per frame pair (≤ 7e-7), so ~5e-6 per attempt with two enrolled
+fingers (32 frames, PAM identifies against all of them), ≤ 2e-5. At 10 it
+would be ~8e-5. This rests on one person's fingers plus 18 touches of family
+members. Gaussian tails would be far too optimistic: the POC tail is much
 heavier.
 
 On 17384 pairs of non-overlapping 80x64 crops (16 px grid) of the AES3500
