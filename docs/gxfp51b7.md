@@ -196,20 +196,30 @@ above, the earlier enrollment, and the left index as the enrolled finger
 against all right index frames), 0 of 6240 impostor frame pairs with both
 scores ≥ 2. Family members touched 18 times (two series, various fingers),
 checked live and offline against both enrolled fingers (576 frame pairs):
-all rejected, at most 5.3, and one pair was ≥ 2 on both scores. That is more
-than the same-person pairs predict (about 0.06 such pairs in 576), so other
-people's tails are likely heavier, and the threshold was raised from 10 to
-12 after the first series.
+all rejected, at most 1.3. One of those touches, a barely touching finger,
+first scored 5.3; it was a blank frame (see below), now skipped. The
+threshold had been raised from 10 to 12 before that was understood and was
+kept as margin.
 
 An estimate, not a measurement: exponential tails fitted to the same-person
 z-scores (above 2.5 for POC, 114 pairs; above 1.5 for the residual, 130
-pairs), independence, and the family members' rate of reaching 5.3 (1 in
-576, 95% upper bound 4.7 in 576) scaled along those tails to 12. That gives
-~1.4e-7 per frame pair (≤ 7e-7), so ~5e-6 per attempt with two enrolled
-fingers (32 frames, PAM identifies against all of them), ≤ 2e-5. At 10 it
-would be ~8e-5. This rests on one person's fingers plus 18 touches of family
-members. Gaussian tails would be far too optimistic: the POC tail is much
-heavier.
+pairs) and independence give ~7e-9 per frame pair at 12 (~1e-7 at 10), so
+~2e-7 per attempt with two enrolled fingers (32 frames; PAM identifies
+against all of them), ~7e-7 allowing three times the tail dependence seen
+below. This rests on one person's fingers plus 18 touches of family
+members; other people's skin may have heavier tails. Gaussian tails would be
+far too optimistic: the POC tail is much heavier.
+
+**Blank and partial frames.** The sensor has a fixed pattern of vertical
+stripes. A barely touching finger gives a frame that, stretched, is mostly
+that pattern, and two such frames correlate at zero shift and angle: a
+family member's blank touch scored 16 against a partial frame of a trial
+24-stage enrollment. So a frame whose vertical stripes (the fy = 0 row of
+its spectrum) carry more than 15% of the energy is not compared (real
+touches: at most 7.5%; blank ones 24..41%), and an enrolled frame must show
+oriented ridges over at least half of its area (enrolled frames 76..100%,
+the two partial ones 34% and 38%). No genuine match on the saved frames was
+lost.
 
 On 17384 pairs of non-overlapping 80x64 crops (16 px grid) of the AES3500
 test image, the maximum is 9.2; 48 pairs are ≥ 2 on both. That sensor has
