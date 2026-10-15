@@ -14,6 +14,7 @@ add_library(gxfp
 		src/io/dev.c
 		src/algo/common.c
 		src/algo/sensor_cfg.c
+		src/algo/chicago_hs_cfg.c
 		src/algo/image/plain.c
 		src/algo/image/decoder.c
 		src/algo/image/fpn.c
@@ -75,4 +76,9 @@ if(BUILD_TESTING)
 	add_executable(gxfp_fdt_retry_test tests/fdt_retry_test.c)
 	target_link_libraries(gxfp_fdt_retry_test PRIVATE gxfp)
 	add_test(NAME gxfp_fdt_retry_policy COMMAND gxfp_fdt_retry_test)
+
+	add_executable(gxfp_chicago_hs_cfg_test tests/chicago_hs_cfg_test.c)
+	target_link_libraries(gxfp_chicago_hs_cfg_test PRIVATE gxfp)
+	target_compile_options(gxfp_chicago_hs_cfg_test PRIVATE -Wall -Wextra -Wpedantic)
+	add_test(NAME gxfp_chicago_hs_cfg COMMAND gxfp_chicago_hs_cfg_test)
 endif()
