@@ -54,6 +54,11 @@ FpiMatchResult fpi_print_sigfm_match (FpPrint * template, FpPrint * print,
                                     gdouble ridge_threshold,
                                     GError * *error);
 
+gdouble fpi_print_sigfm_ridge_best (FpPrint *template,
+                                    FpPrint *print);
+
+gboolean fpi_print_sigfm_ridge_usable (FpPrint *print);
+
 /* Helpers to encode metadata into user ID strings. */
 gchar * fpi_print_generate_user_id (FpPrint * print);
 gboolean fpi_print_fill_from_user_id (FpPrint    *print,

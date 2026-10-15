@@ -83,6 +83,11 @@ typedef enum {
  *   the print and a ridge score (best enrolled frame, see
  *   sigfm_ridge_scores()) at or above this value is also a match. Default 0
  *   (off). The FP_SIGFM_RIDGE_THRESHOLD environment variable overrides it.
+ * @ridge_duplicate: SIGFM with @ridge_threshold only. While enrolling, a
+ *   frame whose ridge score against an already enrolled frame reaches this
+ *   value is refused with a retry, at most 3 times in a row, so that the
+ *   stages cover more of the finger; blank and partial frames (see
+ *   sigfm_ridge_usable()) are always refused. Default 0 (off).
  * @img_width: Width of the image, only provide if constant
  * @img_height: Height of the image, only provide if constant
  * @img_open: Open the device and do basic initialization
@@ -116,6 +121,7 @@ struct _FpImageDeviceClass
 
   gint                    bz3_threshold;
   gdouble                 ridge_threshold;
+  gdouble                 ridge_duplicate;
   gint                    img_width;
   gint                    img_height;
   FpiImageDeviceAlgorithm algorithm;

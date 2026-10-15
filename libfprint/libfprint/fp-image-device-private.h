@@ -31,6 +31,7 @@ typedef struct
   gboolean            finger_present;
 
   gint                enroll_stage;
+  gint                enroll_refused;
 
   gboolean            minutiae_scan_active;
   GError             *action_error;
@@ -38,6 +39,7 @@ typedef struct
 
   gint                bz3_threshold;
   gdouble             ridge_threshold;
+  gdouble             ridge_duplicate;
   FpiPrintType        algorithm;
 } FpImageDevicePrivate;
 

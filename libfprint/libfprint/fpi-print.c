@@ -268,6 +268,58 @@ fpi_print_bz3_match (FpPrint *template, FpPrint *print, gint bz3_threshold, GErr
 }
 
 /**
+ * fpi_print_sigfm_ridge_usable:
+ * @print: A newly scanned #FpPrint of type #FPI_PRINT_SIGFM
+ *
+ * Whether the frame in @print may be enrolled for the ridge matcher: not
+ * blank and with ridges over most of it (see sigfm_ridge_usable()).
+ *
+ * Returns: %TRUE if it may
+ */
+gboolean
+fpi_print_sigfm_ridge_usable (FpPrint *print)
+{
+  return print->type == FPI_PRINT_SIGFM && print->prints->len > 0 &&
+         sigfm_ridge_usable (g_ptr_array_index (print->prints, 0));
+}
+
+/**
+ * fpi_print_sigfm_ridge_best:
+ * @template: A #FpPrint of type #FPI_PRINT_SIGFM, possibly still empty
+ * @print: A newly scanned #FpPrint of type #FPI_PRINT_SIGFM
+ *
+ * The best ridge score of the frame in @print over the frames in @template
+ * (see sigfm_ridge_scores()).
+ *
+ * Returns: The score, or -G_MAXDOUBLE if either print carries no frame or
+ * the scores could not be computed.
+ */
+gdouble
+fpi_print_sigfm_ridge_best (FpPrint *template, FpPrint *print)
+{
+  SigfmImgInfo *against;
+  guint n;
+  g_autofree gdouble *scores = NULL;
+  gdouble best = -G_MAXDOUBLE;
+
+  if (template->type != FPI_PRINT_SIGFM || print->type != FPI_PRINT_SIGFM ||
+      template->prints->len == 0 || print->prints->len == 0)
+    return best;
+  against = g_ptr_array_index (print->prints, 0);
+  if (!sigfm_has_ridge (against))
+    return best;
+
+  n = template->prints->len;
+  scores = g_new (gdouble, n);
+  if (sigfm_ridge_scores ((SigfmImgInfo * const *) template->prints->pdata,
+                          n, against, scores) != 0)
+    return best;
+  for (guint i = 0; i < n; i++)
+    best = MAX (best, scores[i]);
+  return best;
+}
+
+/**
  * fpi_print_sigfm_match:
  * @template: A #FpPrint containing one or more prints
  * @print: A newly scanned #FpPrint to test
@@ -306,19 +358,12 @@ fpi_print_sigfm_match (FpPrint * template, FpPrint * print,
   if (ridge_threshold > 0 && sigfm_has_ridge (against) &&
       template->prints->len > 0)
     {
-      guint n = template->prints->len;
-      g_autofree gdouble *scores = g_new (gdouble, n);
-      gdouble best = -G_MAXDOUBLE;
+      gdouble best = fpi_print_sigfm_ridge_best (template, print);
 
-      if (sigfm_ridge_scores ((SigfmImgInfo * const *) template->prints->pdata,
-                              n, against, scores) == 0)
-        {
-          for (guint i = 0; i < n; i++)
-            best = MAX (best, scores[i]);
-          fp_dbg ("ridge score %.2f/%.2f (%u frames)", best, ridge_threshold, n);
-          if (best >= ridge_threshold)
-            return FPI_MATCH_SUCCESS;
-        }
+      fp_dbg ("ridge score %.2f/%.2f (%u frames)", best, ridge_threshold,
+              template->prints->len);
+      if (best >= ridge_threshold)
+        return FPI_MATCH_SUCCESS;
     }
 
   for (int i = 0; i != template->prints->len; ++i)

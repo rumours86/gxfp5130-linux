@@ -128,6 +128,7 @@ fp_image_device_start_capture_action (FpDevice * device)
     }
 
   priv->enroll_stage = 0;
+  priv->enroll_refused = 0;
   /* The internal state machine guarantees both of these. */
   g_assert (!priv->finger_present);
   g_assert (!priv->minutiae_scan_active);
@@ -195,6 +196,7 @@ fp_image_device_constructed (GObject * obj)
   if (cls->algorithm > 0)
     priv->algorithm = cls->algorithm;
   priv->ridge_threshold = cls->ridge_threshold;
+  priv->ridge_duplicate = cls->ridge_duplicate;
   if (g_getenv ("FP_SIGFM_RIDGE_THRESHOLD"))
     priv->ridge_threshold = g_ascii_strtod (g_getenv ("FP_SIGFM_RIDGE_THRESHOLD"), NULL);
 

@@ -303,10 +303,37 @@ fpi_image_device_minutiae_detected (GObject *source_object, GAsyncResult *res, g
       FpPrint *enroll_print;
       fpi_device_get_enroll_data (device, &enroll_print);
 
+      /* A blank or partial frame would only match the sensor's own pattern. */
+      if (print && priv->ridge_duplicate > 0 &&
+          !fpi_print_sigfm_ridge_usable (print))
+        {
+          fp_dbg ("enroll: blank or partial frame, retry");
+          g_clear_object (&print);
+          error = fpi_device_retry_new_msg (FP_DEVICE_RETRY_CENTER_FINGER,
+                                            "Press the whole finger on the sensor");
+        }
+
+      /* A frame of a part that is already enrolled adds little coverage. */
+      if (print && priv->ridge_duplicate > 0 && priv->enroll_refused < 3)
+        {
+          gdouble best = fpi_print_sigfm_ridge_best (enroll_print, print);
+
+          if (best >= priv->ridge_duplicate)
+            {
+              fp_dbg ("enroll: frame repeats an enrolled one (%.1f >= %.1f), retry",
+                      best, priv->ridge_duplicate);
+              priv->enroll_refused += 1;
+              g_clear_object (&print);
+              error = fpi_device_retry_new_msg (FP_DEVICE_RETRY_GENERAL,
+                                                "This part of the finger is already enrolled, move it a little");
+            }
+        }
+
       if (print)
         {
           fpi_print_add_print (enroll_print, print);
           priv->enroll_stage += 1;
+          priv->enroll_refused = 0;
         }
 
       fpi_device_enroll_progress (device, priv->enroll_stage,

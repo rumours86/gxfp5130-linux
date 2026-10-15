@@ -196,8 +196,9 @@ TEST_SUITE("ridge")
         return result;
     }
 
-    // The GXFP51B7 threshold, see drivers/gxfp51b7.c.
+    // The GXFP51B7 thresholds, see drivers/gxfp51b7.c.
     constexpr double threshold = 12;
+    constexpr double duplicate = 40;
 
     TEST_CASE("an identical frame matches")
     {
@@ -280,6 +281,20 @@ TEST_SUITE("ridge")
         CHECK(!sigfm_ridge_usable(&a));
         CHECK(sigfm_ridge_usable(&b));
         CHECK(score(partial, full) == -100);
+    }
+
+    TEST_CASE("a repeated touch is a duplicate for enrollment")
+    {
+        // 82% overlap: about 80.
+        CHECK(score(crop(88, 96), crop(96, 102)) >= duplicate);
+    }
+
+    TEST_CASE("a half-overlapping touch matches without being a duplicate")
+    {
+        // 52% overlap: about 33, new coverage worth enrolling.
+        const double s = score(crop(88, 96), crop(124, 100));
+        CHECK(s >= threshold);
+        CHECK(s < duplicate);
     }
 
     TEST_CASE("a flat frame is rejected")

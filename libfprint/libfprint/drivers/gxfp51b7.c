@@ -47,6 +47,17 @@
  */
 #define GXFP51B7_RIDGE_THRESHOLD 12.0
 
+/*
+ * Enrollment. In the first 16-stage enrollment, 8 of the 16 frames nearly
+ * repeated another (score 45..67): half the touches added nothing. Replaying
+ * the saved touches in order and refusing frames that score >= 40 against an
+ * accepted one kept 16 distinct frames and raised later sessions' matching
+ * touches from 32 to 37 of 48, as many as 24..32 frames without refusing
+ * (36..38). More frames only raise the false accept rate, so 16 stay.
+ */
+#define GXFP51B7_ENROLL_STAGES 16
+#define GXFP51B7_RIDGE_DUPLICATE 40.0
+
 typedef enum {
   JOB_NONE,
   JOB_OPEN,
@@ -446,12 +457,13 @@ fpi_device_gxfp51b7_class_init (FpiDeviceGxfp51b7Class *klass)
   dev_class->type = FP_DEVICE_TYPE_UDEV;
   dev_class->id_table = id_table;
   dev_class->scan_type = FP_SCAN_TYPE_PRESS;
-  dev_class->nr_enroll_stages = 16;
+  dev_class->nr_enroll_stages = GXFP51B7_ENROLL_STAGES;
 
   img_class->img_width = 80;
   img_class->img_height = 64;
   img_class->algorithm = FPI_DEVICE_ALGO_SIGFM;
   img_class->ridge_threshold = GXFP51B7_RIDGE_THRESHOLD;
+  img_class->ridge_duplicate = GXFP51B7_RIDGE_DUPLICATE;
   img_class->img_open = gxfp51b7_img_open;
   img_class->img_close = gxfp51b7_img_close;
   img_class->activate = gxfp51b7_activate;
