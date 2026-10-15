@@ -6,6 +6,7 @@ Source: https://github.com/Metrohan/gxfp5130-linux/releases
 ## Unreleased
 
 - Experimental GXFP51B7 (ChicagoHS) support for the MateBook X Pro 2020 (MACHC-WAX9, BIOS 1.26): kernel transport, 48-byte TLS PSK, image decoder, finger detection, libfprint driver `gxfp51b7`. Manual setup only, see `docs/gxfp51b7.md` (#16, @rumours86).
+- GXFP51B7: `scripts/gxfp51b7-dmar-rmrr.py` builds a DMAR override that adds the RMRR the firmware lacks for the mailbox. With it, or with `iommu=pt`, the driver binds without an out-of-tree IOMMU module.
 - SIGFM: optional ridge-overlap matcher, enabled per driver through `ridge_threshold` (off by default; used by `gxfp51b7`).
 - Kernel: remove the debugfs directory when probe fails.
 - Kernel: `GXFP5130` now depends on `ACPI_EC` (`ec_read`/`ec_write` are only built with it).
