@@ -186,6 +186,31 @@ int gxfp_decode_chicago(const uint8_t *payload, size_t payload_len,
 	return 0;
 }
 
+int gxfp_decode_chicago_hs(const uint8_t *payload, size_t payload_len,
+			   struct gxfp_decoded_image *out)
+{
+	struct gxfp_decoded_image padded = {0};
+	uint16_t *pixels;
+	int ret;
+
+	if (!payload || !out || payload_len != 10560u)
+		return -EINVAL;
+	ret = gxfp_decode_chicago(payload, payload_len, 88, 80, 0, &padded);
+	if (ret)
+		return ret;
+	pixels = malloc(64u * 80u * sizeof(*pixels));
+	if (!pixels) {
+		gxfp_decoded_image_free(&padded);
+		return -ENOMEM;
+	}
+	memcpy(pixels, padded.pixels, 64u * 80u * sizeof(*pixels));
+	gxfp_decoded_image_free(&padded);
+	out->pixels = pixels;
+	out->rows = 64;
+	out->cols = 80;
+	return 0;
+}
+
 int gxfp_decode_auto_detect(const uint8_t *buf, size_t len,
 			     struct gxfp_decode_auto_result *res)
 {
@@ -198,6 +223,7 @@ int gxfp_decode_auto_detect(const uint8_t *buf, size_t len,
 		int rows;
 		int cols;
 	} modes[] = {
+		{ GXFP_DECODE_CHICAGOHS_RAW, 10560, 64, 80 },
 		{ GXFP_DECODE_MILANG_RAW, 0x39C0, 0x36, 0xB0 },
 		{ GXFP_DECODE_MILANG_NAV, 0x0540, 0x36, 0x10 },
 		{ GXFP_DECODE_CHICAGOH_RAW, 0x1E00, 0x40, 0x50 },
@@ -254,6 +280,8 @@ int gxfp_decode_image(const uint8_t *buf, size_t len, enum gxfp_decode_mode mode
 			return r;
 		return gxfp_decode_image(res.payload, res.payload_len, res.mode, out);
 	}
+	case GXFP_DECODE_CHICAGOHS_RAW:
+		return gxfp_decode_chicago_hs(buf, len, out);
 	case GXFP_DECODE_MILANG_RAW:
 		return gxfp_decode_milan(buf, len, 0x36, 0xB0, out);
 	case GXFP_DECODE_MILANG_NAV:

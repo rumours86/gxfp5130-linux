@@ -76,6 +76,11 @@ if(BUILD_TESTING)
 	target_link_libraries(gxfp_fdt_retry_test PRIVATE gxfp)
 	add_test(NAME gxfp_fdt_retry_policy COMMAND gxfp_fdt_retry_test)
 
+	add_executable(gxfp_chicago_hs_decode_test tests/chicago_hs_decode_test.c)
+	target_link_libraries(gxfp_chicago_hs_decode_test PRIVATE gxfp)
+	target_compile_options(gxfp_chicago_hs_decode_test PRIVATE -Wall -Wextra -Wpedantic)
+	add_test(NAME gxfp_chicago_hs_decode COMMAND gxfp_chicago_hs_decode_test)
+
 	# Interop with an independent TLS-PSK client; skipped without OpenSSL.
 	find_package(OpenSSL)
 	if(OpenSSL_FOUND)
