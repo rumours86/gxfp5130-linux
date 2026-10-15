@@ -148,6 +148,7 @@ driver_sources = {
             'drivers/gxfpmoc/src/io/dev.c',
             'drivers/gxfpmoc/src/proto/goodix_proto.c',
             'drivers/gxfpmoc/src/proto/milan_hu_fdt.c',
+            'drivers/gxfpmoc/src/algo/chicago_hs_cfg.c',
             'drivers/gxfpmoc/src/algo/image/decoder.c',
             'drivers/gxfpmoc/src/algo/image/plain.c',
             'drivers/gxfpmoc/src/tls/tls_engine_mbedtls.c',

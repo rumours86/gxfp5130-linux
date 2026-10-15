@@ -7,11 +7,12 @@ struct gxfp51b7;
 
 /*
  * Blocking calls; libfprint runs them outside the GLib main context.
- * open() initialises the sensor, authenticates TLS and calibrates the
- * no-finger background, so the finger must be off the sensor.
+ * open() initialises the sensor with a config built from its OTP,
+ * authenticates TLS and calibrates the no-finger background, so the finger
+ * must be off the sensor.
  */
 int gxfp51b7_open(struct gxfp51b7 **out, const char *dev,
-		  const char *key, const char *material, int log);
+		  const char *key, int log);
 void gxfp51b7_close(struct gxfp51b7 *s);
 void gxfp51b7_set_cancel(struct gxfp51b7 *s, int (*cancel)(void *), void *ctx);
 int gxfp51b7_stop(struct gxfp51b7 *s);
