@@ -25,6 +25,7 @@ add_library(gxfp
 		src/flow/device_recovery.c
 		src/flow/fdt.c
 		src/flow/session.c
+		src/flow/chicago51b7.c
 		src/cmd/tls_cmd.c
 		src/cmd/goodix_xfer.c
 		src/cmd/production_cmd.c
@@ -95,3 +96,7 @@ if(BUILD_TESTING)
 		add_test(NAME gxfp_tls_psk_interop COMMAND gxfp_tls_psk_test)
 	endif()
 endif()
+
+add_executable(gxfp51b7_capture demos/chicago51b7/main.c)
+target_link_libraries(gxfp51b7_capture PRIVATE gxfp)
+target_compile_options(gxfp51b7_capture PRIVATE -Wall -Wextra -Wpedantic)
