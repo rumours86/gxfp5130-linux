@@ -4,8 +4,9 @@
  * detection and capture.
  *
  * The sequence follows a Windows capture of the same sensor. The 256-byte
- * config, the OTP it was generated for and the first MANUAL seed are read
- * from private files; they are not derived here.
+ * config is built from the live OTP as gfspi does (src/algo/chicago_hs_cfg.c).
+ * The first MANUAL uses the no-finger DOWN table cached by an earlier open,
+ * or a zero table when there is none, as Windows does with goodix.dat.
  */
 #include <errno.h>
 #include <fcntl.h>
@@ -18,6 +19,7 @@
 #include <unistd.h>
 #include <mbedtls/platform_util.h>
 #include "gxfp/flow/chicago51b7.h"
+#include "gxfp/algo/chicago_hs_cfg.h"
 #include "gxfp/io/dev.h"
 #include "gxfp/proto/goodix_proto.h"
 #include "gxfp/proto/milan_hu_fdt.h"
@@ -77,6 +79,28 @@ static int private_read(const char *p, uint8_t *b, size_t len)
 	else if (read(fd, b, len) != (ssize_t)len)
 		ret = -EIO;
 	close(fd);
+	return ret;
+}
+
+/* Replace p with b, mode 0600; the old file stays intact on failure. */
+static int private_write(const char *p, const uint8_t *b, size_t len)
+{
+	char tmp[4096];
+	int fd, ret = 0;
+
+	if (snprintf(tmp, sizeof(tmp), "%s.tmp", p) >= (int)sizeof(tmp))
+		return -ENAMETOOLONG;
+	fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600);
+	if (fd < 0)
+		return -errno;
+	if (write(fd, b, len) != (ssize_t)len)
+		ret = -EIO;
+	if (close(fd) && !ret)
+		ret = -EIO;
+	if (!ret && rename(tmp, p))
+		ret = -errno;
+	if (ret)
+		unlink(tmp);
 	return ret;
 }
 
@@ -195,13 +219,12 @@ static int result01(const uint8_t *b)
 	return b[0] == 1 && b[1] == 1 ? 0 : -EPROTO;
 }
 
-static int init_sensor(struct gxfp51b7 *s, const uint8_t otp_expected[64],
-		       const uint8_t config[256])
+static int init_sensor(struct gxfp51b7 *s, struct gxfp_chicago_hs_calibration *cal)
 {
 	const uint8_t installed[2] = { 1, 0 }, zero[2] = { 0 }, reset[2] = { 5, 20 };
 	const uint8_t reg0[5] = { 0, 0, 0, 4, 0 }, idle[2] = { 20, 0 };
 	const uint8_t timing[8] = { 0x88, 0x0c, 0xc8, 0, 0xc8, 0, 0xc8, 0 };
-	uint8_t reply[64];
+	uint8_t reply[64], config[GXFP_CHICAGO_HS_CFG_LEN];
 	int ret;
 
 	/* 0x96: tell the firmware a host driver is installed (sent twice). */
@@ -233,13 +256,19 @@ static int init_sensor(struct gxfp51b7 *s, const uint8_t otp_expected[64],
 	if (reply[0] != 4 || reply[2] != 0 || reply[3] != 0x25)
 		return -EPROTO;
 	session_log(s, "%s\n", "Live chip identity: ChicagoHS 2504");
-	/* 0xa6: OTP must be the one the private config was made for. */
+	/* 0xa6: OTP; the config and the FDT delta come from it. */
 	ret = exchange(s, 0xa6, zero, 2, 64, reply);
 	if (ret)
 		return ret;
-	if (memcmp(reply, otp_expected, 64))
-		return -EPROTO;
-	session_log(s, "%s\n", "Live OTP64 matches private capture from this sensor");
+	ret = gxfp_chicago_hs_build_config(reply, config, cal);
+	mbedtls_platform_zeroize(reply, sizeof(reply));
+	if (ret)
+		return ret;
+	/* Windows only logs a CRC mismatch and carries on; so does this. */
+	session_log(s, "OTP CRC %s; %s tcode 0x%x, FDT delta %u, FDT offset %u\n",
+		    cal->crc_ok ? "ok" : "MISMATCH",
+		    cal->has_tcode ? "calibrated" : "default", cal->tcode,
+		    cal->fdt_delta, cal->fdt_offset);
 	ret = exchange(s, 0xa2, reset, 2, 3, reply);
 	if (ret)
 		return ret;
@@ -256,7 +285,7 @@ static int init_sensor(struct gxfp51b7 *s, const uint8_t otp_expected[64],
 	ret = result01(reply);
 	if (ret)
 		return ret;
-	ret = exchange(s, 0x90, config, 256, 2, reply);
+	ret = exchange(s, 0x90, config, sizeof(config), 2, reply);
 	if (ret)
 		return ret;
 	ret = result01(reply);
@@ -375,6 +404,70 @@ static int manual_bare(struct gxfp51b7 *s)
 	}
 }
 
+/*
+ * The first MANUAL carries the current DOWN table. Windows sends the one an
+ * earlier session cached in goodix.dat; without that file the table is
+ * still all zero (gf_update_all_base, 5c738). This is the no-cache case:
+ * keep only the readings, a touch mask against a zero table means nothing.
+ * A finger already resting on the sensor goes unnoticed here, which is why
+ * the bare table is cached for the next open.
+ */
+static int manual_bootstrap(struct gxfp51b7 *s)
+{
+	const uint16_t zero[6] = { 0 };
+	uint8_t seed[14], reply[16];
+	struct gxfp_hu_fdt_event event;
+	uint16_t base[6];
+	int ret = gxfp_hu_fdt_encode(0x36, zero, seed, sizeof(seed));
+
+	if (ret < 0)
+		return ret;
+	ret = exchange(s, 0x36, seed, sizeof(seed), 16, reply);
+	if (ret)
+		return ret;
+	ret = gxfp_hu_fdt_parse_event(0x36, reply, sizeof(reply), &event);
+	if (ret || event.status != 0x100)
+		return ret ? ret : -EPROTO;
+	for (unsigned int i = 0; i < 6; i++)
+		if (((event.raw[i] >> 1) & 255) == 0 || ((event.raw[i] >> 1) & 255) == 255)
+			return -ERANGE;
+	session_log(s, "MANUAL from a zero table: touch mask 0x%x (ignored)\n",
+		    event.touch_mask);
+	ret = gxfp_hu_fdt_down_base(event.raw, base);
+	if (!ret)
+		ret = gxfp_hu_fdt_encode(0x36, base, s->seed, sizeof(s->seed));
+	return ret == 14 ? 0 : (ret < 0 ? ret : -EPROTO);
+}
+
+/*
+ * 0x82: register 0082 holds the FDT delta in its high byte once a MANUAL has
+ * applied the FDT section of the config; Windows reads it after two. A
+ * match shows the generated config is the live one.
+ * Like the chip ID the reply is pair-swapped, so the high byte comes first.
+ */
+static int check_fdt_delta(struct gxfp51b7 *s, uint8_t delta)
+{
+	const uint8_t req[5] = { 0, 0x82, 0, 2, 0 };
+	uint8_t reply[2];
+	int ret = exchange(s, 0x82, req, sizeof(req), 2, reply);
+
+	if (ret)
+		return ret;
+	session_log(s, "Register 0082 high byte %u, config %u\n", reply[0], delta);
+	return reply[0] == delta ? 0 : -EPROTO;
+}
+
+/* A cached MANUAL payload: header 0d 01, no channel at either end of the range. */
+static int seed_usable(const uint8_t seed[14])
+{
+	if (seed[0] != 0x0d || seed[1] != 1)
+		return 0;
+	for (unsigned int i = 0; i < 6; i++)
+		if (seed[3 + 2 * i] == 0 || seed[3 + 2 * i] == 255)
+			return 0;
+	return 1;
+}
+
 /* 0x20 GET_IMAGE: one frame over TLS, decoded to 80x64 12-bit samples. */
 static int raw_capture(struct gxfp51b7 *s, struct gxfp_decoded_image *out)
 {
@@ -487,12 +580,14 @@ void gxfp51b7_close(struct gxfp51b7 *s)
 }
 
 int gxfp51b7_open(struct gxfp51b7 **out, const char *dev, const char *keypath,
-		  const char *material, int log)
+		  const char *fdt_cache, int log)
 {
-	if (!out || !dev || !keypath || !material)
+	if (!out || !dev || !keypath)
 		return -EINVAL;
-	uint8_t key[48] = { 0 }, otp[64], config[256];
-	char path[4096];
+	uint8_t key[48] = { 0 };
+	struct gxfp_chicago_hs_calibration cal;
+	uint8_t cached[14] = { 0 };
+	int have_cache = 0;
 	struct gxfp51b7 *s = calloc(1, sizeof(*s));
 
 	if (!s)
@@ -504,37 +599,11 @@ int gxfp51b7_open(struct gxfp51b7 **out, const char *dev, const char *keypath,
 
 	if (ret)
 		goto fail;
-	snprintf(path, sizeof(path), "%s/%s", material, "otp.bin");
-	ret = private_read(path, otp, sizeof(otp));
-	if (ret)
-		goto fail;
-	snprintf(path, sizeof(path), "%s/%s", material, "config.bin");
-	ret = private_read(path, config, sizeof(config));
-	if (ret)
-		goto fail;
-	snprintf(path, sizeof(path), "%s/manual-seed.bin", material);
-	ret = private_read(path, s->seed, 14);
-	if (ret)
-		goto fail;
-
-	/* Sanity-check the private files: config sum, MANUAL header, OTP copies. */
-	unsigned int sum = 0;
-
-	for (unsigned int i = 0; i < 256; i += 2)
-		sum += config[i] | ((unsigned int)config[i + 1] << 8);
-	if ((sum & 65535) != 0x5a5b || s->seed[0] != 0x0d || s->seed[1] != 1) {
-		ret = -EBADMSG;
-		goto fail;
+	if (fdt_cache && !private_read(fdt_cache, cached, sizeof(cached)) &&
+	    seed_usable(cached)) {
+		memcpy(s->seed, cached, sizeof(cached));
+		have_cache = 1;
 	}
-	unsigned int x = otp[0x2a];
-
-	if (!x || x != otp[0x2d] || (x ^ otp[0x2b]) != 255) {
-		ret = -EBADMSG;
-		goto fail;
-	}
-	/* FDT UP delta derived from OTP byte 0x2a. */
-	s->delta = ((((x & 15) + 2) * 100 * 256 / (((x >> 4) + 1) * 16 + 64)) / 3 >> 4) & 255;
-
 	ret = gxfp_tls_engine_create(&s->tls, key, 48, tls_send, s);
 	mbedtls_platform_zeroize(key, 48);
 	if (ret)
@@ -543,11 +612,15 @@ int gxfp51b7_open(struct gxfp51b7 **out, const char *dev, const char *keypath,
 	if (!ret)
 		ret = gxfp_dev_flush_rxq(&s->dev);
 	if (!ret)
-		ret = init_sensor(s, otp, config);
+		ret = init_sensor(s, &cal);
 	if (!ret)
 		ret = start_tls(s);
+	if (!ret && !have_cache)
+		ret = manual_bootstrap(s);
 	if (ret)
 		goto fail;
+	/* FDT UP margin; the template default when the OTP had no tcode. */
+	s->delta = cal.fdt_delta;
 	/*
 	 * MANUAL reports the current mask; initial UP only reports transitions
 	 * and cannot serve as an absence query before a DOWN has happened.
@@ -588,13 +661,34 @@ int gxfp51b7_open(struct gxfp51b7 **out, const char *dev, const char *keypath,
 		if (s->noise < 2)
 			s->noise = 2;
 		ret = manual_bare(s);
-		session_log(s, "51B7 calibration: 3 background frames; noise99=%d delta=%d\n",
-			    s->noise, s->delta);
+		/* After a MANUAL, as Windows: before one it read 40 for a config of 31. */
+		if (!ret)
+			ret = check_fdt_delta(s, cal.fdt_delta);
+		session_log(s, "51B7 calibration: 3 background frames; noise99=%d delta=%d (%s)\n",
+			    s->noise, s->delta, have_cache ? "cached FDT base" : "zero-table start");
 	}
 	for (unsigned int k = 0; k < 3; k++)
 		gxfp_decoded_image_free(&frames[k]);
+	/*
+	 * A touch against the cached table is a finger or a stale cache; drop
+	 * the cache so that the next open starts over from a zero table.
+	 */
+	if (ret == -EBUSY && have_cache)
+		unlink(fdt_cache);
 	if (ret)
 		goto fail;
+	/*
+	 * Cache the bare table. Without a cache nothing proved the sensor bare,
+	 * so require background noise of a bare sensor (11..13 here; a finger
+	 * lifted just before calibration gave 20..64).
+	 */
+	if (fdt_cache && (have_cache || s->noise < 20) &&
+	    memcmp(cached, s->seed, sizeof(cached))) {
+		int err = private_write(fdt_cache, s->seed, sizeof(s->seed));
+
+		if (err)
+			session_log(s, "FDT base cache not written: %d\n", err);
+	}
 	*out = s;
 	return 0;
 fail:

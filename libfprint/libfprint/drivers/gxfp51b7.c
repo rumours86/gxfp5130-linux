@@ -9,8 +9,8 @@
  *
  * Optional environment:
  *   FP_GXFP51B7_PSK            48-byte PSK file (default below)
- *   FP_GXFP51B7_MATERIAL       directory with otp.bin, config.bin and
- *                              manual-seed.bin for this sensor
+ *   FP_GXFP51B7_FDT_CACHE      no-finger FDT table kept between opens
+ *                              (default below; empty disables it)
  *   FP_GXFP51B7_STATUS         file to write the finger prompt state to,
  *                              for test UIs
  *   FP_GXFP51B7_DIAGNOSTIC_DIR save every captured frame there as a 0600
@@ -30,7 +30,7 @@
 #include "gxfp/flow/chicago51b7.h"
 
 #define GXFP51B7_DEFAULT_PSK_PATH      "/var/lib/fprint/gxfp51b7/psk.bin"
-#define GXFP51B7_DEFAULT_MATERIAL_PATH "/var/lib/fprint/gxfp51b7"
+#define GXFP51B7_DEFAULT_FDT_CACHE     "/var/lib/fprint/gxfp51b7/fdt-base.bin"
 #define GXFP51B7_POLL_MS               20
 
 /*
@@ -78,7 +78,7 @@ struct _FpiDeviceGxfp51b7
 
   gchar            *dev_path;
   gchar            *key_path;
-  gchar            *material_path;
+  gchar            *fdt_cache;
 };
 
 G_DECLARE_FINAL_TYPE (FpiDeviceGxfp51b7, fpi_device_gxfp51b7, FPI, DEVICE_GXFP51B7, FpImageDevice)
@@ -136,7 +136,7 @@ worker (GTask        *task,
     {
     case JOB_OPEN:
       ret = gxfp51b7_open (&self->session, self->dev_path, self->key_path,
-                           self->material_path, g_getenv ("FP_GXFP_LOG") != NULL);
+                           self->fdt_cache, g_getenv ("FP_GXFP_LOG") != NULL);
       break;
 
     case JOB_CAPTURE:
@@ -350,15 +350,17 @@ gxfp51b7_img_open (FpImageDevice *device)
 {
   FpiDeviceGxfp51b7 *self = FPI_DEVICE_GXFP51B7 (device);
   const char *key = g_getenv ("FP_GXFP51B7_PSK");
-  const char *material = g_getenv ("FP_GXFP51B7_MATERIAL");
+  const char *cache = g_getenv ("FP_GXFP51B7_FDT_CACHE");
 
   g_free (self->dev_path);
   g_free (self->key_path);
-  g_free (self->material_path);
+  g_free (self->fdt_cache);
   self->dev_path = g_strdup (fpi_device_get_udev_data (FP_DEVICE (device),
                                                        FPI_DEVICE_UDEV_SUBTYPE_CHARDEV));
   self->key_path = g_strdup (key ? key : GXFP51B7_DEFAULT_PSK_PATH);
-  self->material_path = g_strdup (material ? material : GXFP51B7_DEFAULT_MATERIAL_PATH);
+  if (!cache)
+    cache = GXFP51B7_DEFAULT_FDT_CACHE;
+  self->fdt_cache = *cache ? g_strdup (cache) : NULL;
   start_job (self, JOB_OPEN);
 }
 
@@ -428,7 +430,7 @@ fpi_device_gxfp51b7_dispose (GObject *obj)
   g_clear_object (&self->worker_cancel);
   g_clear_pointer (&self->dev_path, g_free);
   g_clear_pointer (&self->key_path, g_free);
-  g_clear_pointer (&self->material_path, g_free);
+  g_clear_pointer (&self->fdt_cache, g_free);
 
   G_OBJECT_CLASS (fpi_device_gxfp51b7_parent_class)->dispose (obj);
 }

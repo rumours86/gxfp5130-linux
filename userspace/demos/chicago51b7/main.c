@@ -2,7 +2,7 @@
 /*
  * gxfp51b7_capture: calibrate, wait for one touch and save the image.
  *
- *   gxfp51b7_capture <psk.bin> <material-dir> <out.pgm>
+ *   gxfp51b7_capture <psk.bin> <out.pgm> [fdt-cache]
  *
  * Keep the finger off the sensor until READY_FOR_FINGER is printed.
  * The image is written with mode 0600; it is biometric data.
@@ -67,11 +67,11 @@ int main(int argc, char **argv)
 	struct gxfp_decoded_image img = { 0 };
 	int ret;
 
-	if (argc != 4) {
-		fprintf(stderr, "usage: %s <psk.bin> <material-dir> <out.pgm>\n", argv[0]);
+	if (argc != 3 && argc != 4) {
+		fprintf(stderr, "usage: %s <psk.bin> <out.pgm> [fdt-cache]\n", argv[0]);
 		return 2;
 	}
-	ret = gxfp51b7_open(&s, "/dev/gxfp", argv[1], argv[2], 1);
+	ret = gxfp51b7_open(&s, "/dev/gxfp", argv[1], argc == 4 ? argv[3] : NULL, 1);
 	if (ret)
 		goto out;
 	puts("READY_FOR_FINGER");
@@ -80,7 +80,7 @@ int main(int argc, char **argv)
 	if (!ret)
 		ret = gxfp51b7_capture(s, &img);
 	if (!ret)
-		ret = write_pgm(argv[3], &img);
+		ret = write_pgm(argv[2], &img);
 	gxfp_decoded_image_free(&img);
 	if (!ret) {
 		puts("REMOVE_FINGER");
