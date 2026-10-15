@@ -344,6 +344,37 @@ static int manual(struct gxfp51b7 *s, uint8_t seed[14])
 	return ret == 14 ? 0 : (ret < 0 ? ret : -EPROTO);
 }
 
+/*
+ * Calibration needs the sensor bare. A finger that is already there when a
+ * verification starts (a touch to wake the lock screen, or one put down
+ * before the prompt) used to fail the open at once with -EBUSY; wait up to
+ * 4 s for it to be lifted instead. Right after the touch mask clears the
+ * frames still carry the finger (noise99 20..64 against 11..12), so once a
+ * touch was seen the mask must stay clear for 0.5 s.
+ */
+static int manual_bare(struct gxfp51b7 *s)
+{
+	const struct timespec pause = { 0, 100 * 1000 * 1000 };
+	const uint64_t end = now_ms() + 4000;
+	unsigned int clear = 0, settle = 0;
+	int ret;
+
+	for (;;) {
+		ret = manual(s, s->seed);
+		if (ret == -EBUSY) {
+			if (!settle)
+				session_log(s, "%s\n", "51B7 calibration: finger on the sensor, waiting for it to lift");
+			settle = 5;
+			clear = 0;
+		} else if (ret || ++clear > settle) {
+			return ret;
+		}
+		if (now_ms() >= end)
+			return ret;
+		nanosleep(&pause, NULL);
+	}
+}
+
 /* 0x20 GET_IMAGE: one frame over TLS, decoded to 80x64 12-bit samples. */
 static int raw_capture(struct gxfp51b7 *s, struct gxfp_decoded_image *out)
 {
@@ -524,7 +555,7 @@ int gxfp51b7_open(struct gxfp51b7 **out, const char *dev, const char *keypath,
 	struct gxfp_decoded_image frames[3] = { { 0 } };
 
 	for (unsigned int k = 0; k < 3; k++) {
-		ret = manual(s, s->seed);
+		ret = manual_bare(s);
 		if (!ret)
 			ret = raw_capture(s, &frames[k]);
 		if (ret)
@@ -556,7 +587,7 @@ int gxfp51b7_open(struct gxfp51b7 **out, const char *dev, const char *keypath,
 		}
 		if (s->noise < 2)
 			s->noise = 2;
-		ret = manual(s, s->seed);
+		ret = manual_bare(s);
 		session_log(s, "51B7 calibration: 3 background frames; noise99=%d delta=%d\n",
 			    s->noise, s->delta);
 	}
