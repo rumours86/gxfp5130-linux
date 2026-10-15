@@ -142,6 +142,17 @@ driver_sources = {
     'fpcmoc' :
         [ 'drivers/fpcmoc/fpc.c' ],
 
+    'gxfp51b7' :
+        [
+            'drivers/gxfp51b7.c',
+            'drivers/gxfpmoc/src/io/dev.c',
+            'drivers/gxfpmoc/src/proto/goodix_proto.c',
+            'drivers/gxfpmoc/src/proto/milan_hu_fdt.c',
+            'drivers/gxfpmoc/src/algo/image/decoder.c',
+            'drivers/gxfpmoc/src/algo/image/plain.c',
+            'drivers/gxfpmoc/src/tls/tls_engine_mbedtls.c',
+            'drivers/gxfpmoc/src/flow/chicago51b7.c',
+        ],
     'gxfp' :
         [
             'drivers/gxfp.c',
@@ -248,7 +259,7 @@ deps = [
     mathlib_dep,
 ] + optional_deps
 
-if 'gxfp' in drivers
+if 'gxfp' in drivers or 'gxfp51b7' in drivers
     mbedtls_dep = dependency('mbedtls')
     mbedcrypto_dep = dependency('mbedcrypto')
     mbedx509_dep = dependency('mbedx509')

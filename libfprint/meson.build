@@ -132,6 +132,7 @@ default_drivers = [
 
     # eSPI (misc chardev)
     'gxfp',
+    'gxfp51b7',
 ]
 
 # FIXME: All the drivers should be fixed by adjusting the byte order.
@@ -162,6 +163,7 @@ driver_helper_mapping = {
     'uru4000' : [ 'nss' ],
     'elanspi' : [ 'udev' ],
     'gxfp'    : [ 'udev' ],
+    'gxfp51b7': [ 'udev' ],
     'virtual_image'          : [ 'virtual' ],
     'virtual_device'         : [ 'virtual' ],
     'virtual_device_storage' : [ 'virtual' ],
