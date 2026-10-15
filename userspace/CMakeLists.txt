@@ -19,6 +19,7 @@ add_library(gxfp
 		src/algo/image/fpn.c
 		src/algo/payload/provision.c
 		src/proto/goodix_proto.c
+		src/proto/milan_hu_fdt.c
 		src/tls/tls_engine_mbedtls.c
 		src/tls/tls_service.c
 		src/flow/device_recovery.c
@@ -72,6 +73,10 @@ target_link_libraries(gxfp_capture PRIVATE MbedTLS::mbedtls)
 target_link_libraries(gxfp_recovery PRIVATE MbedTLS::mbedtls)
 
 if(BUILD_TESTING)
+	add_executable(gxfp_milan_hu_fdt_test tests/milan_hu_fdt_test.c)
+	target_link_libraries(gxfp_milan_hu_fdt_test PRIVATE gxfp)
+	add_test(NAME gxfp_milan_hu_fdt_codec COMMAND gxfp_milan_hu_fdt_test)
+
 	add_executable(gxfp_fdt_retry_test tests/fdt_retry_test.c)
 	target_link_libraries(gxfp_fdt_retry_test PRIVATE gxfp)
 	add_test(NAME gxfp_fdt_retry_policy COMMAND gxfp_fdt_retry_test)
