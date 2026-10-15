@@ -14,6 +14,8 @@
 
 struct gxfp_dev {
 	struct device *dev;
+	bool is_51b7;
+	bool transport_fault;
 
 	struct mutex lock;
 	atomic_t mailbox_seq16;

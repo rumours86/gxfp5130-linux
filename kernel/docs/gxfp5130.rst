@@ -78,13 +78,37 @@ When ``CONFIG_DEBUG_FS`` is enabled, the driver creates
 ``trace_enable`` (read-write)
     ``0`` to disable tracing (default), ``1`` to enable.
 
+GXFP51B7 (experimental)
+-----------------------
+
+ACPI HID ``GXFP51B7`` uses the same ``/dev/gxfp`` interface with a different
+transport. It binds only on the Huawei MateBook X Pro 2020 (MACHC-WAX9)
+with BIOS 1.26 (checked through DMI), the only machine its EC protocol was
+verified on.
+
+- TX: the Goodix MP frame is written without the eSPI wrapper at mailbox
+  offset 0 (at most 512 bytes). The driver then takes the AML mutex
+  ``\_SB.PCI0.LPCB.HWEC.ECMT``, waits for EC register 0x3a to read 0 and
+  writes 0xf0 to it, with bounded waits.
+- RX: frames appear at offset 0x1000. The IRQ GPIO is active low. The second
+  GPIO is a host-ready line: high while idle, driven low after a frame was
+  copied, back high once the IRQ line has risen and 5 ms have passed.
+- The driver does not run the GXFP5130 startup handshake or shutdown
+  command; userspace initialises the sensor.
+- An RX error disables the IRQ until the module is reloaded.
+- The EC writes RX frames into the mailbox by DMA from the LPC bridge
+  (00:1f.0). The firmware provides no RMRR for the mailbox range, so the
+  driver refuses to bind unless that range is identity-mapped in the
+  bridge's IOMMU domain.
+
 Supported hardware
 ------------------
 
-=============================== ======= ============================
-Device                          ACPI ID Firmware seen
-=============================== ======= ============================
+=============================== ======== ============================
+Device                          ACPI ID  Firmware seen
+=============================== ======== ============================
 Huawei MateBook D16 2024        GXFP5130 GF_GCC_EC_20067
 Huawei MateBook X Pro 2024      GXFP5130 GF_GCC_EC_20068
 Huawei MateBook 14 2024         GXFP5130 (under investigation)
-=============================== ======= ============================
+Huawei MateBook X Pro 2020      GXFP51B7 GF_9ELIBE_EC_19024
+=============================== ======== ============================

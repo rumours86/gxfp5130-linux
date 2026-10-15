@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 config GXFP5130
 	tristate "Goodix GXFP5130 eSPI fingerprint sensor"
-	depends on ACPI && HAS_IOMEM && GPIOLIB
+	depends on ACPI && ACPI_EC && HAS_IOMEM && GPIOLIB
 	help
 	  Driver for the Goodix GXFP5130 fingerprint sensor found in
 	  Huawei MateBook laptops (MateBook D16 2024, MateBook X Pro 2024,
@@ -9,6 +9,11 @@ config GXFP5130
 
 	  The sensor connects to the host via an eSPI-based MMIO mailbox
 	  and is enumerated through ACPI (ACPI HID: GXFP5130).
+
+	  Experimental support for the GXFP51B7 (ChicagoHS) variant is
+	  limited to the Huawei MateBook X Pro 2020 (MACHC-WAX9) with
+	  BIOS 1.26 and needs the mailbox to be identity-mapped in the
+	  IOMMU.
 
 	  A character device (/dev/gxfp) is created for userspace access.
 	  The libfprint library uses this interface for biometric enrollment

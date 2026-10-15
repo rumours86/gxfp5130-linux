@@ -9,6 +9,7 @@
 #include "../transport/gxfp_espi_rx_irq.h"
 
 #include "gxfp_irq.h"
+#include "../transport/gxfp_51b7.h"
 #include "gxfp_uapi.h"
 #include "gxfp_trace.h"
 
@@ -24,6 +25,9 @@ irqreturn_t gxfp_irq_thread(int irq, void *data)
 
 	if (!gdev || !gdev->irq.rx_buf || gdev->irq.rx_cap < 16)
 		return IRQ_NONE;
+
+	if (gdev->is_51b7)
+		return gxfp_51b7_irq_thread(irq, data);
 
 	mutex_lock(&gdev->lock);
 

@@ -6,6 +6,7 @@
 #include <linux/string.h>
 
 #include "gxfp_espi_tx.h"
+#include "gxfp_51b7.h"
 #include "gxfp_espi_rx_sync.h"
 #include "gxfp_espi_common.h"
 #include "gxfp_priv.h"
@@ -45,6 +46,8 @@ int gxfp_espi_write(struct gxfp_dev *gdev,
 
 	if (!gdev || !mp_frame || mp_frame_len == 0)
 		return -EINVAL;
+	if (gdev->is_51b7)
+		return gxfp_51b7_write(gdev, mp_frame, mp_frame_len);
 	if (!gdev->hw.mailbox_mmio)
 		return -ENODEV;
 

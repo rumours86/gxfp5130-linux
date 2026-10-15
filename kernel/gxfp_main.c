@@ -66,7 +66,7 @@ static void gxfp_shutdown_sequence(struct platform_device *pdev)
 	if (!pdev)
 		return;
 	gdev = platform_get_drvdata(pdev);
-	if (!gdev)
+	if (!gdev || gdev->is_51b7)
 		return;
 
 	mutex_lock(&gdev->lock);
@@ -85,7 +85,9 @@ static int gxfp_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	ret = gxfp_startup_sequence(pdev);
+	gdev = platform_get_drvdata(pdev);
+	/* 51B7 has a different init sequence; userspace starts it explicitly. */
+	ret = gdev->is_51b7 ? 0 : gxfp_startup_sequence(pdev);
 	if (ret) {
 		gxfp_platform_remove(pdev);
 		return ret;
@@ -106,6 +108,7 @@ static void gxfp_remove(struct platform_device *pdev)
 
 static const struct acpi_device_id gxfp_acpi_match[] = {
 	{ "GXFP5130", 0 },
+	{ "GXFP51B7", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(acpi, gxfp_acpi_match);
@@ -121,7 +124,7 @@ static struct platform_driver gxfp_driver = {
 
 module_platform_driver(gxfp_driver);
 
-MODULE_DESCRIPTION("eSPI-Based GXFP5130 Fingerprint Sensor Driver");
+MODULE_DESCRIPTION("eSPI-Based GXFP5130 / experimental GXFP51B7 transport");
 MODULE_AUTHOR("vindeu");
 MODULE_AUTHOR("Metehan Günen <metehangnen@gmail.com>");
 MODULE_LICENSE("GPL");

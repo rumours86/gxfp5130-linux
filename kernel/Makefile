@@ -24,6 +24,7 @@ ccflags-y += -I$(src)/include
 gxfp-y := \
 	gxfp_main.o \
 	transport/gxfp_espi_common.o \
+	transport/gxfp_51b7.o \
 	transport/gxfp_espi_tx.o \
 	transport/gxfp_espi_rx_sync.o \
 	transport/gxfp_espi_rx_irq.o \

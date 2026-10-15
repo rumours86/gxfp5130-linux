@@ -17,6 +17,7 @@
 #include "gxfp_irq.h"
 #include "gxfp_platform.h"
 #include "gxfp_trace.h"
+#include "../transport/gxfp_51b7.h"
 
 #define GXFP_IRQ_RX_CAP (128u * 1024u)
 
@@ -94,6 +95,8 @@ int gxfp_platform_probe(struct platform_device *pdev)
 	if (!gdev)
 		return -ENOMEM;
 	gdev->dev = &pdev->dev;
+	gdev->is_51b7 = acpi_dev_hid_uid_match(ACPI_COMPANION(&pdev->dev),
+					       "GXFP51B7", NULL);
 	mutex_init(&gdev->lock);
 	atomic_set(&gdev->mailbox_seq16, GXFP_ESPI_SEQ16_INIT);
 	gdev->irq.assem_active = false;
@@ -107,6 +110,11 @@ int gxfp_platform_probe(struct platform_device *pdev)
 	}
 
 	gdev->hw.mailbox_size = resource_size(res);
+	if (gdev->is_51b7 && resource_size(res) != 0x8000) {
+		dev_err(&pdev->dev, "51B7: unexpected mailbox size %pa\n",
+			&gdev->hw.mailbox_size);
+		return -EINVAL;
+	}
 	gdev->hw.mailbox_mmio = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(gdev->hw.mailbox_mmio))
 		return PTR_ERR(gdev->hw.mailbox_mmio);
@@ -157,7 +165,7 @@ int gxfp_platform_probe(struct platform_device *pdev)
 	}
 
 	irq_type = irq_get_trigger_type(gdev->hw.irq);
-	if (irq_type == IRQ_TYPE_NONE) {
+	if (irq_type == IRQ_TYPE_NONE && !gdev->is_51b7) {
 		/*
 		 * ACPI DSDT for SPBA reports:
 		 *   GpioInt(Level, ActiveHigh, ExclusiveAndWake, ...)
@@ -167,6 +175,12 @@ int gxfp_platform_probe(struct platform_device *pdev)
 		irq_type = irq_get_trigger_type(gdev->hw.irq);
 	}
 
+	if (gdev->is_51b7) {
+		/* The 51B7 firmware holds the line low while a frame is ready. */
+		ret = irq_set_irq_type(gdev->hw.irq, IRQ_TYPE_LEVEL_LOW);
+		if (ret)
+			goto err_ioctl;
+	}
 	irq_flags = IRQF_ONESHOT | IRQF_NO_AUTOEN;
 	ret = devm_request_threaded_irq(&pdev->dev,
 				     gdev->hw.irq,
@@ -199,6 +213,9 @@ int gxfp_platform_init_gpios(struct platform_device *pdev)
 	struct gxfp_dev *gdev = platform_get_drvdata(pdev);
 	struct gpio_desc *d;
 	int added_map = 0;
+
+	if (gdev->is_51b7)
+		return gxfp_51b7_init_gpios(pdev);
 
 	d = devm_gpiod_get(&pdev->dev, "write-done", GPIOD_OUT_LOW);
 	if (IS_ERR(d) && PTR_ERR(d) == -ENOENT) {
