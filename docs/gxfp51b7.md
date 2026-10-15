@@ -94,8 +94,12 @@ initrd /boot/gxfp51b7-dmar.cpio /boot/initrd.img-7.0.0-38-generic
 ```
 
 On Debian and Ubuntu, `GRUB_EARLY_INITRD_LINUX_CUSTOM="gxfp51b7-dmar.cpio"`
-in `/etc/default/grub` and `update-grub` write that line for every kernel;
-this persistent form was not tried. Expected kernel log:
+in `/etc/default/grub` (or a file in `/etc/default/grub.d/`) and
+`update-grub` write that line for every kernel, recovery entries included.
+The test machine now boots this way with no window module installed: after
+a normal reboot and after S3 every touch produced a frame and no DMAR fault
+was logged (the matcher accepted 4 of 5 touches, then 1 of 3 after resume).
+Expected kernel log:
 
 ```
 ACPI: Table Upgrade: override [DMAR-HUAWEI- CFL-ULT]
