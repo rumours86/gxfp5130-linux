@@ -107,6 +107,14 @@ void sigfm_attach_frame(SigfmImgInfo* info, const SigfmPix* pix, int width,
                         int height);
 
 /**
+ * @brief Whether the stored frame is good enough to be an enrolled frame
+ * @details Not blank (the sensor's stripe pattern does not dominate) and
+ * showing ridges over at least half of its area. Other frames are skipped by
+ * sigfm_ridge_scores().
+ */
+int sigfm_ridge_usable(SigfmImgInfo* info);
+
+/**
  * @brief Ridge scores of a frame against enrolled frames
  *
  * Two scores per enrolled frame, each as a z-score against impostor pairs
@@ -118,8 +126,9 @@ void sigfm_attach_frame(SigfmImgInfo* info, const SigfmPix* pix, int width,
  * @param enrolled Array of enrolled infos
  * @param count Length of enrolled and scores
  * @param frame Newly captured info
- * @param scores Output; -100 means no plausible pose, no stored frame or a
- * different frame size
+ * @param scores Output; -100 means no plausible pose, no stored frame, a
+ * different frame size, a blank probe or an enrolled frame that is not
+ * sigfm_ridge_usable()
  * @return int 0 on success, -1 on error
  */
 int sigfm_ridge_scores(SigfmImgInfo* const* enrolled, int count,
