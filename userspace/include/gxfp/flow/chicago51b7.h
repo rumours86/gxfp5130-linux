@@ -9,10 +9,12 @@ struct gxfp51b7;
  * Blocking calls; libfprint runs them outside the GLib main context.
  * open() initialises the sensor with a config built from its OTP,
  * authenticates TLS and calibrates the no-finger background, so the finger
- * must be off the sensor.
+ * must be off the sensor. fdt_cache (may be NULL) is a 0600 file holding the
+ * no-finger FDT table of the last open; it lets the first MANUAL notice a
+ * finger that is already down. It is created and replaced here.
  */
 int gxfp51b7_open(struct gxfp51b7 **out, const char *dev,
-		  const char *key, int log);
+		  const char *key, const char *fdt_cache, int log);
 void gxfp51b7_close(struct gxfp51b7 *s);
 void gxfp51b7_set_cancel(struct gxfp51b7 *s, int (*cancel)(void *), void *ctx);
 int gxfp51b7_stop(struct gxfp51b7 *s);

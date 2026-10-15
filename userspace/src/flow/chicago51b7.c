@@ -4,8 +4,9 @@
  * detection and capture.
  *
  * The sequence follows a Windows capture of the same sensor. The 256-byte
- * config is built from the live OTP as gfspi does (src/algo/chicago_hs_cfg.c);
- * the first MANUAL starts from a zero table, as on a fresh Windows install.
+ * config is built from the live OTP as gfspi does (src/algo/chicago_hs_cfg.c).
+ * The first MANUAL uses the no-finger DOWN table cached by an earlier open,
+ * or a zero table when there is none, as Windows does with goodix.dat.
  */
 #include <errno.h>
 #include <fcntl.h>
@@ -78,6 +79,28 @@ static int private_read(const char *p, uint8_t *b, size_t len)
 	else if (read(fd, b, len) != (ssize_t)len)
 		ret = -EIO;
 	close(fd);
+	return ret;
+}
+
+/* Replace p with b, mode 0600; the old file stays intact on failure. */
+static int private_write(const char *p, const uint8_t *b, size_t len)
+{
+	char tmp[4096];
+	int fd, ret = 0;
+
+	if (snprintf(tmp, sizeof(tmp), "%s.tmp", p) >= (int)sizeof(tmp))
+		return -ENAMETOOLONG;
+	fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600);
+	if (fd < 0)
+		return -errno;
+	if (write(fd, b, len) != (ssize_t)len)
+		ret = -EIO;
+	if (close(fd) && !ret)
+		ret = -EIO;
+	if (!ret && rename(tmp, p))
+		ret = -errno;
+	if (ret)
+		unlink(tmp);
 	return ret;
 }
 
@@ -353,8 +376,10 @@ static int manual(struct gxfp51b7 *s, uint8_t seed[14])
 /*
  * The first MANUAL carries the current DOWN table. Windows sends the one an
  * earlier session cached in goodix.dat; without that file the table is
- * still all zero (gf_update_all_base, 5c738). Do the latter and keep only
- * the readings: a touch mask against a zero table means nothing.
+ * still all zero (gf_update_all_base, 5c738). This is the no-cache case:
+ * keep only the readings, a touch mask against a zero table means nothing.
+ * A finger already resting on the sensor goes unnoticed here, which is why
+ * the bare table is cached for the next open.
  */
 static int manual_bootstrap(struct gxfp51b7 *s)
 {
@@ -398,6 +423,17 @@ static int check_fdt_delta(struct gxfp51b7 *s, uint8_t delta)
 		return ret;
 	session_log(s, "Register 0082 high byte %u, config %u\n", reply[0], delta);
 	return reply[0] == delta ? 0 : -EPROTO;
+}
+
+/* A cached MANUAL payload: header 0d 01, no channel at either end of the range. */
+static int seed_usable(const uint8_t seed[14])
+{
+	if (seed[0] != 0x0d || seed[1] != 1)
+		return 0;
+	for (unsigned int i = 0; i < 6; i++)
+		if (seed[3 + 2 * i] == 0 || seed[3 + 2 * i] == 255)
+			return 0;
+	return 1;
 }
 
 /* 0x20 GET_IMAGE: one frame over TLS, decoded to 80x64 12-bit samples. */
@@ -512,12 +548,14 @@ void gxfp51b7_close(struct gxfp51b7 *s)
 }
 
 int gxfp51b7_open(struct gxfp51b7 **out, const char *dev, const char *keypath,
-		  int log)
+		  const char *fdt_cache, int log)
 {
 	if (!out || !dev || !keypath)
 		return -EINVAL;
 	uint8_t key[48] = { 0 };
 	struct gxfp_chicago_hs_calibration cal;
+	uint8_t cached[14] = { 0 };
+	int have_cache = 0;
 	struct gxfp51b7 *s = calloc(1, sizeof(*s));
 
 	if (!s)
@@ -529,6 +567,11 @@ int gxfp51b7_open(struct gxfp51b7 **out, const char *dev, const char *keypath,
 
 	if (ret)
 		goto fail;
+	if (fdt_cache && !private_read(fdt_cache, cached, sizeof(cached)) &&
+	    seed_usable(cached)) {
+		memcpy(s->seed, cached, sizeof(cached));
+		have_cache = 1;
+	}
 	ret = gxfp_tls_engine_create(&s->tls, key, 48, tls_send, s);
 	mbedtls_platform_zeroize(key, 48);
 	if (ret)
@@ -540,7 +583,7 @@ int gxfp51b7_open(struct gxfp51b7 **out, const char *dev, const char *keypath,
 		ret = init_sensor(s, &cal);
 	if (!ret)
 		ret = start_tls(s);
-	if (!ret)
+	if (!ret && !have_cache)
 		ret = manual_bootstrap(s);
 	if (!ret)
 		ret = check_fdt_delta(s, cal.fdt_delta);
@@ -588,13 +631,31 @@ int gxfp51b7_open(struct gxfp51b7 **out, const char *dev, const char *keypath,
 		if (s->noise < 2)
 			s->noise = 2;
 		ret = manual(s, s->seed);
-		session_log(s, "51B7 calibration: 3 background frames; noise99=%d delta=%d\n",
-			    s->noise, s->delta);
+		session_log(s, "51B7 calibration: 3 background frames; noise99=%d delta=%d (%s)\n",
+			    s->noise, s->delta, have_cache ? "cached FDT base" : "zero-table start");
 	}
 	for (unsigned int k = 0; k < 3; k++)
 		gxfp_decoded_image_free(&frames[k]);
+	/*
+	 * A touch against the cached table is a finger or a stale cache; drop
+	 * the cache so that the next open starts over from a zero table.
+	 */
+	if (ret == -EBUSY && have_cache)
+		unlink(fdt_cache);
 	if (ret)
 		goto fail;
+	/*
+	 * Cache the bare table. Without a cache nothing proved the sensor bare,
+	 * so require background noise of a bare sensor (11..13 here; a finger
+	 * lifted just before calibration gave 20..64).
+	 */
+	if (fdt_cache && (have_cache || s->noise < 20) &&
+	    memcmp(cached, s->seed, sizeof(cached))) {
+		int err = private_write(fdt_cache, s->seed, sizeof(s->seed));
+
+		if (err)
+			session_log(s, "FDT base cache not written: %d\n", err);
+	}
 	*out = s;
 	return 0;
 fail:
