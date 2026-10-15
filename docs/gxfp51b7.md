@@ -155,7 +155,7 @@ when both are ≥ 2, else the smaller one. The best enrolled frame decides;
 otherwise SIGFM still does.
 
 - Enabled per driver: `FpImageDeviceClass.ridge_threshold` (0 = off, the
-  default). `gxfp51b7` sets 10. `FP_SIGFM_RIDGE_THRESHOLD` overrides it.
+  default). `gxfp51b7` sets 12. `FP_SIGFM_RIDGE_THRESHOLD` overrides it.
 - Only then the 8-bit frame is stored in the print (appended after the SIGFM
   data, +5 KiB per sample). Prints without it still load; older libfprint
   reads the new prints and ignores the frame.
@@ -172,39 +172,52 @@ previous rigid-ECC score (mean of the two best frames ≥ 0.80):
 | right index, next day, ordinary | 10 | 16.1..39.0 | 8 | 8 |
 | right index, next day, first series (merged ridges) | 3 | 37.2 | 1 | 1 |
 | right index, deliberately off-centre / light | 11 | 16.2..58.0 | 8 | 6 |
-| right index, an earlier session (an hour before enrollment) | 24 | 11.5..38.6 | 17 | 9 |
+| right index, an earlier session (an hour before enrollment) | 24 | 13.7..38.6 | 16 | 9 |
 | left index (the closest impostor) | 15 | ≤ 1.6 | 0 | 0 |
 | other fingers | 25 | ≤ 1.9 | 0 | 0 |
 
 The ordinary misses have no true counterpart among the enrolled frames under
 any method tried: two touched an area that only off-centre touches covered,
 two matched no stored frame at all (one looks turned beyond the ±30°
-search). Against an earlier enrollment (20 frames, an hour before), 34 of
+search). Against an earlier enrollment (20 frames, an hour before), 32 of
 the 40 later frames match (13 before).
 
 A second enrollment, the left index (16 samples, 11 hours later): 12 of 15
 earlier left index touches match it; 84 right index frames score at most 1.9
 against it. Live, with this matcher installed, 6 right index touches checked
 against the left index template were all rejected (scores -0.4..0.3); offline,
-5 of them match the right index template (20..28.5).
+5 of them match the right index template (20..28.5). Of 4 live touches
+against the right index template, 2 matched (18.4, 23.6); the other 2 found no
+counterpart (POC at impostor level) and touched parts the 16 enrolled frames
+do not cover. Live and offline scores agree to 0.01.
 
 **False accept rate.** Measured: 0 of 158 impostor attempts (the gallery
 above, the earlier enrollment, and the left index as the enrolled finger
-against all right index frames), and 0 of 6240 impostor frame pairs. That
-only bounds it below ~2% per attempt (95%). An estimate: with exponential
-tails fitted to both z-scores (above 2.5 for POC, 114 pairs; above 1.5 for
-the residual, 130 pairs) and independence, a frame pair passes at 10 with
-probability ~1e-7, so ~2e-6 per attempt with 16 frames, or ~6e-6 allowing for
-three times the tail dependence seen below. This rests on one person's
-fingers: the constants and tails may differ for other people. Gaussian
-tails would be far too optimistic: the POC tail is much heavier.
+against all right index frames), 0 of 6240 impostor frame pairs with both
+scores ≥ 2. Another person (a family member) touched 9 times, live and
+offline against both enrolled fingers (288 frame pairs): all rejected, at
+most 5.3, and one pair was ≥ 2 on both scores. That is more than the
+same-person pairs predict (about 0.03 such pairs in 288), so other people's
+tails are likely heavier, and the threshold was raised from 10 to 12.
+
+An estimate, not a measurement: exponential tails fitted to the same-person
+z-scores (above 2.5 for POC, 114 pairs; above 1.5 for the residual, 130
+pairs), independence, and the other person's rate of reaching 5.3 (1 in 288,
+95% upper bound 4.7 in 288) scaled along those tails to 12. That gives ~3e-7
+per frame pair (≤ 1.3e-6), so ~1e-5 per attempt with two enrolled fingers
+(32 frames, PAM identifies against all of them), ≤ 4e-5. At 10 it would be
+~1.6e-4. This rests on one person's fingers plus one other person's nine
+touches. Gaussian tails would be far too optimistic: the POC tail is much
+heavier.
 
 On 17384 pairs of non-overlapping 80x64 crops (16 px grid) of the AES3500
 test image, the maximum is 9.2; 48 pairs are ≥ 2 on both. That sensor has
 other statistics; in its own units the maximum is 7.9, but the tails depend
-on each other more: P(POC ≥ 2 | residual ≥ 2) is 0.11 there, P(POC ≥ 2) 0.04. The
-threshold of 10 sits above that pair; on the GXFP51B7 data 9 and 10 accept
-the same touches.
+on each other more: P(POC ≥ 2 | residual ≥ 2) is 0.11 there, P(POC ≥ 2) 0.04.
+
+Raising the threshold from 10 to 12 costs one earlier-session touch in the
+table and two frames against the earlier enrollment; ordinary touches score
+16.1 and more (live: 18.4 and 23.6).
 
 Tried and not included, measured on the frames above: local contrast
 normalisation, CLAHE and light smoothing before the rigid ECC; adding

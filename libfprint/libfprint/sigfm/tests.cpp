@@ -197,7 +197,7 @@ TEST_SUITE("ridge")
     }
 
     // The GXFP51B7 threshold, see drivers/gxfp51b7.c.
-    constexpr double threshold = 10;
+    constexpr double threshold = 12;
 
     TEST_CASE("an identical frame matches")
     {
