@@ -194,6 +194,18 @@ constexpr double poc_mean = 0.1335;
 constexpr double poc_sd = 0.0113;
 // Both scores need at least this much evidence on their own.
 constexpr double ridge_min_z = 2;
+// The sensor has a fixed pattern of vertical stripes. A frame of a barely
+// touching finger is mostly that pattern once stretched, and two such frames
+// correlate at zero shift: a family member's blank touch scored 16 against a
+// weak enrolled frame. Frames whose stripes (the fy = 0 row of the spectrum)
+// carry more than this share of the energy are blank: real touches had at
+// most 0.075, blank ones 0.24..0.41.
+constexpr double ridge_max_stripes = 0.15;
+// An enrolled frame must show ridges (structure-tensor coherence above 0.5)
+// over at least this share of its area; a partial touch leaves the rest to
+// the stripes. Enrolled frames had 0.76..1 before a 24-stage enrollment let
+// two partial ones in (0.34, 0.38), one of which a left index touch matched.
+constexpr double ridge_min_coherent = 0.5;
 constexpr double ridge_none = -100;
 
 bool ridge_prepare(const cv::Mat& raw, cv::Mat& out)
@@ -332,6 +344,52 @@ cv::Mat poc_shift_mask()
     return m;
 }
 
+// Share of the (windowed, DC-free) spectral energy in vertical stripes.
+double ridge_stripes(const cv::Mat& hp)
+{
+    cv::Mat win, spectrum;
+    cv::createHanningWindow(win, hp.size(), CV_32F);
+    cv::dft(hp.mul(win), spectrum, cv::DFT_COMPLEX_OUTPUT);
+    double stripes = 0, all = 0;
+    for (int y = 0; y < spectrum.rows; y++) {
+        for (int x = 0; x < spectrum.cols; x++) {
+            const auto v = spectrum.at<cv::Vec2f>(y, x);
+            const double e = double(v[0]) * v[0] + double(v[1]) * v[1];
+            if (x || y) {
+                all += e;
+                stripes += y ? 0 : e;
+            }
+        }
+    }
+    return all > 0 ? stripes / all : 1;
+}
+
+// Share of the observed area with oriented ridges.
+double ridge_coherent(const cv::Mat& hp, const cv::Mat& mask)
+{
+    cv::Mat gx, gy;
+    cv::Sobel(hp, gx, CV_32F, 1, 0, 3);
+    cv::Sobel(hp, gy, CV_32F, 0, 1, 3);
+    cv::Mat jxx = gx.mul(gx), jyy = gy.mul(gy), jxy = gx.mul(gy);
+    for (auto* j : {&jxx, &jyy, &jxy}) {
+        cv::GaussianBlur(*j, *j, cv::Size(), 4);
+    }
+    int coherent = 0, observed = 0;
+    for (int y = 0; y < hp.rows; y++) {
+        for (int x = 0; x < hp.cols; x++) {
+            if (!mask.at<uchar>(y, x)) {
+                continue;
+            }
+            const float a = jxx.at<float>(y, x), b = jyy.at<float>(y, x),
+                        c = jxy.at<float>(y, x);
+            observed++;
+            coherent += a + b > 1e-12f &&
+                        std::sqrt((a - b) * (a - b) + 4 * c * c) / (a + b) > .5f;
+        }
+    }
+    return observed ? double(coherent) / observed : 0;
+}
+
 struct RidgeFrame {
     cv::Mat hp, mask, residual;
     // The reference keeps one spectrum, the probe one per rotation.
@@ -353,6 +411,13 @@ bool ridge_frame(const cv::Mat& raw, bool rotations, RidgeFrame& f)
     f.mask = cv::Mat(raw.size(), CV_8U, cv::Scalar(0));
     f.mask(cv::boundingRect(observed)).setTo(255);
     cv::erode(f.mask, f.mask, cv::Mat::ones(7, 7, CV_8U));
+    if (ridge_stripes(f.hp) > ridge_max_stripes) {
+        return false;
+    }
+    // Enrolled frames (no rotations) must also be mostly ridges.
+    if (!rotations && ridge_coherent(f.hp, f.mask) < ridge_min_coherent) {
+        return false;
+    }
     f.residual = ridge_residual(f.hp);
     if (!rotations) {
         f.spectra.push_back(poc_spectrum(f.hp, f.mask));
@@ -467,6 +532,17 @@ void sigfm_attach_frame(SigfmImgInfo* info, const SigfmPix* pix, int width,
 {
     info->ridge.create(height, width, CV_8UC1);
     std::memcpy(info->ridge.data, pix, std::size_t(width) * height);
+}
+
+int sigfm_ridge_usable(SigfmImgInfo* info)
+{
+    try {
+        RidgeFrame f;
+        return !info->ridge.empty() && ridge_frame(info->ridge, false, f);
+    }
+    catch (const std::exception&) {
+        return 0;
+    }
 }
 
 int sigfm_ridge_scores(SigfmImgInfo* const* enrolled, int count,

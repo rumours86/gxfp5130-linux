@@ -242,6 +242,46 @@ TEST_SUITE("ridge")
         CHECK(score(crop(96, 96), crop(64, 0)) < threshold);
     }
 
+    // What a barely touching finger looks like once stretched: the sensor's
+    // vertical stripes and noise.
+    static std::vector<SigfmPix> stripes(unsigned seed)
+    {
+        std::vector<SigfmPix> out(80 * 64);
+        cv::RNG rng(seed);
+        for (int y = 0; y < 64; y++) {
+            for (int x = 0; x < 80; x++) {
+                out[y * 80 + x] = cv::saturate_cast<SigfmPix>(
+                    150 + (x % 4 == 0 ? 60 : 0) + rng.gaussian(8));
+            }
+        }
+        return out;
+    }
+
+    TEST_CASE("blank frames of the sensor's stripes are never matched")
+    {
+        // Two blank frames share the stripes at zero shift.
+        CHECK(score(stripes(1), stripes(2)) == -100);
+        CHECK(score(crop(88, 96), stripes(3)) == -100);
+        CHECK(score(stripes(4), crop(88, 96)) == -100);
+    }
+
+    TEST_CASE("a partial touch cannot be an enrolled frame")
+    {
+        auto partial = crop(88, 96);
+        for (int y = 0; y < 64; y++) {
+            for (int x = 28; x < 80; x++) {
+                partial[y * 80 + x] = 200;
+            }
+        }
+        SigfmImgInfo a{}, b{};
+        sigfm_attach_frame(&a, partial.data(), 80, 64);
+        const auto full = crop(88, 96);
+        sigfm_attach_frame(&b, full.data(), 80, 64);
+        CHECK(!sigfm_ridge_usable(&a));
+        CHECK(sigfm_ridge_usable(&b));
+        CHECK(score(partial, full) == -100);
+    }
+
     TEST_CASE("a flat frame is rejected")
     {
         const std::vector<SigfmPix> flat(80 * 64, 128);
