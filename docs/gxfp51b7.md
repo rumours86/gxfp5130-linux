@@ -22,7 +22,7 @@ general users; see [Prerequisites](#prerequisites) and [Limits](#limits).
 | Six-channel FDT codec | `src/proto/milan_hu_fdt.c` (+ test; historical name, see below) |
 | Session: init, TLS, finger detect, capture | `src/flow/chicago51b7.c`, demo `gxfp51b7_capture` |
 | libfprint driver | `libfprint/libfprint/drivers/gxfp51b7.c` |
-| Ridge-overlap matcher for SIGFM | `sigfm/sigfm.cpp`, `fpi-print.c`, `ridge_threshold` class field (+ tests) |
+| Ridge matcher for SIGFM (phase correlation + ridge residual) | `sigfm/sigfm.cpp`, `fpi-print.c`, `ridge_threshold` class field (+ tests) |
 
 The `userspace/` sources are mirrored byte for byte into
 `libfprint/libfprint/drivers/gxfpmoc/`, as for the 5130.
@@ -130,46 +130,90 @@ SIGFM (ratio 0.85 + CLAHE) almost never matches two separate touches on this
 score 10^5 and more. It only tolerates 5% change of keypoint distances, and
 pressure changes the ridge spacing more than that.
 
-This series adds a ridge-overlap score next to SIGFM. Both frames are
-high-passed, aligned by a rigid ECC (rotation + translation, 176 seeds, the
-best 3 refined), and the correlation of the aligned frames is the score.
-A match needs the mean of the two best enrolled frames ≥ `ridge_threshold`;
-otherwise the SIGFM score still decides. An affine fit was tried first and
-dropped: it stretched other fingers onto the enrolled one (0.79 for a wrong
-finger, 0.69 for a real touch). Strong real matches needed almost no stretch
-(anisotropy 1.01..1.04); the impostor fits used 1.07..3.3.
+Plain correlation of aligned ridge images does not work either. Most 80x64
+patches show near-parallel ridges of similar spacing. A rigid ECC fit of the
+left index reached 0.73..0.78 against 0.81..0.95 for real touches, and
+nothing in preprocessing or enrollment coverage moved that.
+
+This series adds a ridge score next to SIGFM, built from two measures that
+the parallel-ridge pattern does not carry:
+
+1. **Phase-only correlation** (band-limited to half the Nyquist frequency)
+   of the high-passed frames, the probe rotated in 2° steps up to ±30°.
+   Whitening the spectrum gives ridge endings, bifurcations and pores the
+   same weight as the dominant ridge frequency. The peak also gives the pose.
+2. **Ridge residual**: each frame minus itself smoothed along the local
+   ridge direction (structure tensor σ 4, Gaussian σ 3 along the ridge). It
+   keeps what parallel ridges lack. Its correlation at the POC pose, refined
+   by a rigid ECC, is near zero unless the pose is a true correspondence.
+
+Each is a z-score against 6240 impostor pairs measured on this sensor (right
+index frames against other fingers of the same person, both directions).
+For those pairs the two are uncorrelated (r = 0.04), also in the tail: none
+of them is ≥ 2 on both. An enrolled frame scores the sum of the two z-scores
+when both are ≥ 2, else the smaller one. The best enrolled frame decides;
+otherwise SIGFM still does.
 
 - Enabled per driver: `FpImageDeviceClass.ridge_threshold` (0 = off, the
-  default). `gxfp51b7` sets 0.80. `FP_SIGFM_RIDGE_THRESHOLD` overrides it.
+  default). `gxfp51b7` sets 10. `FP_SIGFM_RIDGE_THRESHOLD` overrides it.
 - Only then the 8-bit frame is stored in the print (appended after the SIGFM
   data, +5 KiB per sample). Prints without it still load; older libfprint
   reads the new prints and ignores the frame.
-- ~0.6 s per verify with 16 enrolled frames on 8 threads (OpenCV `parallel_for_`).
+- ~30 ms per enrolled frame on one core; 16 frames run in parallel
+  (OpenCV `parallel_for_`).
 
-One user, one enrollment of the right index finger (16 samples):
+One user, one enrollment of the right index finger (16 samples). The same
+saved frames are scored offline by the matcher in this series and by the
+previous rigid-ECC score (mean of the two best frames ≥ 0.80):
 
-| Probe | Touches | Ridge score | Matched |
-|---|---|---|---|
-| right index, night, ordinary | 14 | 0.71..0.95 | 12 (misses: two lock-screen tries; the third matched) |
-| right index, next day, ordinary | 10 | 0.67..0.92 | 8 |
-| right index, next day, first series (merged ridges: moist or pressed hard) | 6 | 0.43..0.85 | 1 |
-| right index, deliberately off-centre / light | 11 | 0.63..0.94 | 9 (3 by SIGFM) |
-| left index (the closest impostor) | 15 | ≤ 0.73 | 0 |
-| other fingers | 23 | ≤ 0.72 | 0 |
+| Probe | Touches | Ridge score of matches | Matched | Before |
+|---|---|---|---|---|
+| right index, night, ordinary | 14 | 20.9..44.9 | 12 | 12 |
+| right index, next day, ordinary | 10 | 16.1..39.0 | 8 | 8 |
+| right index, next day, first series (merged ridges) | 3 | 37.2 | 1 | 1 |
+| right index, deliberately off-centre / light | 11 | 16.2..58.0 | 8 | 6 |
+| right index, an earlier session (an hour before enrollment) | 24 | 11.5..38.6 | 17 | 9 |
+| left index (the closest impostor) | 15 | ≤ 1.6 | 0 | 0 |
+| other fingers | 25 | ≤ 1.9 | 0 | 0 |
 
-**The false accept rate is not established.** 0 of 38 impostor touches only
-bounds it below ~8% per attempt (95%). On non-overlapping 80x64 crops of the
-AES3500 test image, 1 of 25 probes reached exactly 0.80 against a 16..21 frame
-gallery. Periodic ridges correlate. A check that the two best enrolled frames
-also agree with each other did not separate those cases and is not included.
+The ordinary misses have no true counterpart among the enrolled frames under
+any method tried: two touched an area that only off-centre touches covered,
+two matched no stored frame at all (one looks turned beyond the ±30°
+search). Against an earlier enrollment (20 frames, an hour before), 34 of
+the 40 later frames match (13 before).
 
-Tried and not included, measured on the 38 genuine and 38 impostor frames
-saved above: local contrast normalisation, CLAHE before the high-pass and
-light smoothing each gained at most one genuine touch while raising the
-impostor maximum to 0.74..0.75. Adding 13 next-day frames to the 16-frame
-gallery raised genuine touches ≥ 0.80 from 27 to 31 of 38, and the impostor
-maximum from 0.73 to 0.77. The score itself, not preprocessing or
-enrollment coverage, limits this matcher.
+A second enrollment, the left index (16 samples, 11 hours later): 12 of 15
+earlier left index touches match it; 84 right index frames score at most 1.9
+against it. Live, with this matcher installed, 6 right index touches checked
+against the left index template were all rejected (scores -0.4..0.3); offline,
+5 of them match the right index template (20..28.5).
+
+**False accept rate.** Measured: 0 of 158 impostor attempts (the gallery
+above, the earlier enrollment, and the left index as the enrolled finger
+against all right index frames), and 0 of 6240 impostor frame pairs. That
+only bounds it below ~2% per attempt (95%). An estimate: with exponential
+tails fitted to both z-scores (above 2.5 for POC, 114 pairs; above 1.5 for
+the residual, 130 pairs) and independence, a frame pair passes at 10 with
+probability ~1e-7, so ~2e-6 per attempt with 16 frames, or ~6e-6 allowing for
+three times the tail dependence seen below. This rests on one person's
+fingers: the constants and tails may differ for other people. Gaussian
+tails would be far too optimistic: the POC tail is much heavier.
+
+On 17384 pairs of non-overlapping 80x64 crops (16 px grid) of the AES3500
+test image, the maximum is 9.2; 48 pairs are ≥ 2 on both. That sensor has
+other statistics; in its own units the maximum is 7.9, but the tails depend
+on each other more: P(POC ≥ 2 | residual ≥ 2) is 0.11 there, P(POC ≥ 2) 0.04. The
+threshold of 10 sits above that pair; on the GXFP51B7 data 9 and 10 accept
+the same touches.
+
+Tried and not included, measured on the frames above: local contrast
+normalisation, CLAHE and light smoothing before the rigid ECC; adding
+next-day frames to the gallery (more genuine, impostor maximum 0.73→0.77);
+block-wise correlation, orientation-field agreement and peak sharpness along
+the ridges at the ECC pose; choosing among the ECC candidates by residual;
+a ±60° search (one impostor's residual rose to 0.34); a check that the poses
+of a probe against two enrolled frames agree (often uninformative: enrolled
+frames that nearly coincide agree for any probe).
 
 ## Limits
 
