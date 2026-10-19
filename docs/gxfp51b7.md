@@ -185,6 +185,26 @@ table drops the cache; a stale one costs one failed open.
 
 ## Config from OTP
 
+### Template provenance
+
+The 256-byte `template12` array in `userspace/src/algo/chicago_hs_cfg.c`
+(mirrored into `libfprint/libfprint/drivers/gxfpmoc/src/algo/`) was copied
+from the Windows driver binary `gfspi.dll` **1.1.151.18**, SHA-256
+`d98e873e02b00d03d90ccdd78ac69624676a6b9c3662ce66dfca220551b675cd`.
+Its source is entry **12** (zero-based, 256 bytes per entry) of the `.data`
+configuration table at RVA **0x93510**, read by `download_general_config`
+(RVA `0x1c11c`). The entry starts at RVA **0x94110**
+(`0x93510 + 12 * 0x100`); `device_enable_init_by_chip` (RVA `0x54ef4`)
+selects sensor type 12 for chip `0x2504`.
+
+These constant template bytes are not derived from OTP. The per-sensor
+calibration fields and checksum are applied afterwards as described below.
+Metrohan has **not reviewed or approved this source**; see the
+[maintainer's comment](https://github.com/Metrohan/gxfp5130-linux/issues/16#issuecomment-6265169787).
+The Windows binary's licence has not been verified in this fork.
+
+### Per-sensor calibration
+
 `gxfp_chicago_hs_build_config()` repeats what `gfspi` does:
 
 1. `download_general_config` (`1c11c`) copies the 256-byte template for
